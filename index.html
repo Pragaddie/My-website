@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>Live Location Map</title>
+  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet"/>
+  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+  <!-- PMTiles is optional; keep it if you plan to use your own tiles later -->
+  <script src="https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js"></script>
+  <style>
+    html,body,#map{height:100%;margin:0}
+    .hud{
+      position:fixed; left:12px; top:12px; z-index:10;
+      display:flex; gap:8px; flex-wrap:wrap;
+    }
+    .btn{
+      background:#0f172a; color:#e2e8f0; border:1px solid #1f2937;
+      padding:8px 12px; border-radius:10px; font:14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      cursor:pointer;
+    }
+    .btn[disabled]{opacity:.6; cursor:not-allowed}
+    .pill{
+      background:#0f172a; color:#9ca3af; border:1px solid #1f2937; padding:6px 10px; border-radius:999px; font:12px system-ui;
+    }
+    .toast{
+      position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+      background:#0f172a; color:#e2e8f0; border:1px solid #1f2937; padding:8px 12px; border-radius:10px; z-index:11;
+    }
+  </style>
+</head>
+<body>
+  <div class="hud">
+    <button id="startBtn" class="btn">▶ Start tracking</button>
+    <button id="stopBtn" class="btn" disabled>⏹ Stop</button>
+    <button id="centerBtn" class="btn">🎯 Follow me: ON</button>
+    <span id="status" class="pill">Waiting for location…</span>
+  </div>
+  <div id="map"></div>
+
+  <script>
+    // ----- MAP SETUP -----
+    // If you later host your own vector tiles as PMTiles, uncomment the pmtiles source section below
+    // and comment out the OSM raster source.
+
+    // Optional: enable "pmtiles://" protocol (harmless if unused)
+    const pmProtocol = new pmtiles.Protocol();
+    maplibregl.addProtocol("pmtiles", pmProtocol.tile);
+
+    // Base style using OpenStreetMap raster tiles (no keys, quick start)
+    const style = {
+      "version": 8,
+      "sources": {
+        "osm": {
+          "type": "raster",
+          "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+          "tileSize": 256,
+          "attribution": "© OpenStreetMap contributors"
+        }
+        // --- To use your own vector tiles later (PMTiles), add:
+        // , "basemap": {
+        //   "type": "vector",
+        //   "tiles": ["pmtiles://ontario.pmtiles"],
+        //   "minzoom": 0, "maxzoom": 14,
+        //   "attribution": "© OpenStreetMap contributors"
+        // }
+      },
+      "layers": [
+        { "id": "osm", "type": "raster", "source": "osm" }
+        // If using vector tiles, add your vector layers here instead of the raster layer.
+      ]
+    };
+
+    const map = new maplibregl.Map({
+      container: "map",
+      style,
+      center: [-79.3832, 43.6532], // Toronto as a default
+      zoom: 14,
+      pitch: 0,
+      bearing: 0
+    });
+    map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+    // ----- LIVE LOCATION STATE -----
+    let watchId = null;
+    let follow = true; // auto-center
+    let lastCoord = null;
+    let headingDeg = null;
+
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn  = document.getElementById("stopBtn");
+    const centerBtn= document.getElementById("centerBtn");
+    const statusEl = document.getElementById("status");
+
+    // Create layers for accuracy circle + position marker + heading
+    map.on("load", () => {
+      map.addSource("me", {
+        "type": "geojson",
+        "data": {"type":"FeatureCollection","features":[]}
+      });
+      map.addLayer({
+        "id": "me-accuracy",
+        "type": "fill",
+        "source": "me",
+        "paint": {
+          "fill-color": "#3b82f680",
+          "fill-opacity": 0.2
+        },
+        "filter": ["==", ["get","kind"], "accuracy"]
+      });
+      map.addLayer({
+        "id": "me-marker",
+        "type": "circle",
+        "source": "me",
+        "paint": {
+          "circle-radius": 7,
+          "circle-color": "#60a5fa",
+          "circle-stroke-color": "white",
+          "circle-stroke-width": 2
+        },
+        "filter": ["==", ["get","kind"], "point"]
+      });
+      map.addLayer({
+        "id": "me-heading",
+        "type": "symbol",
+        "source": "me",
+        "layout": {
+          "icon-image": "triangle-11",
+          "icon-size": 1.2,
+          "icon-rotate": ["get","heading"]
+        },
+        "paint": {},
+        "filter": ["==", ["get","kind"], "heading"]
+      });
+
+      // Provide a simple triangle icon via built-in sprite fallback
+      // (MapLibre will use a default if triangle-11 isn't present; acceptable for MVP)
+    });
+
+    function toast(msg){
+      const t=document.createElement("div");
+      t.className="toast"; t.textContent=msg; document.body.appendChild(t);
+      setTimeout(()=>t.remove(),1800);
+    }
+
+    // Build GeoJSON from position + accuracy + heading
+    function updateMyFeatures(coords, accuracyMeters){
+      const [lng, lat] = coords;
+      const features = [];
+
+      // Accuracy circle as a polygon (approximate with 64 sides)
+      if (accuracyMeters && accuracyMeters > 0) {
+        const circle = circlePolygon([lng, lat], accuracyMeters);
+        features.push({
+          "type": "Feature",
+          "properties": {kind: "accuracy"},
+          "geometry": {"type":"Polygon","coordinates":[circle]}
+        });
+      }
+
+      // Dot
+      features.push({
+        "type": "Feature",
+        "properties": {kind: "point"},
+        "geometry": {"type":"Point","coordinates":[lng,lat]}
+      });
+
+      // Heading arrow
+      if (headingDeg != null && isFinite(headingDeg)) {
+        features.push({
+          "type": "Feature",
+          "properties": {kind: "heading", heading: headingDeg},
+          "geometry": {"type":"Point","coordinates":[lng,lat]}
+        });
+      }
+
+      map.getSource("me")?.setData({"type":"FeatureCollection","features":features});
+    }
+
+    // Create a rough circle polygon in WebMercator meters
+    function circlePolygon(centerLngLat, radiusMeters){
+      const [lng, lat] = centerLngLat;
+      const steps = 64;
+      const coords = [];
+      const earth = 6378137; // meters
+      const dLng = (m) => (m / (earth * Math.cos(lat * Math.PI/180))) * (180/Math.PI);
+      const dLat = (m) => (m / earth) * (180/Math.PI);
+      for (let i=0;i<=steps;i++){
+        const ang = (i/steps) * Math.PI*2;
+        coords.push([
+          lng + dLng(Math.sin(ang)*radiusMeters),
+          lat + dLat(Math.cos(ang)*radiusMeters)
+        ]);
+      }
+      return coords;
+    }
+
+    // ----- GEOLOCATION WATCH -----
+    function startTracking(){
+      if (!("geolocation" in navigator)) {
+        statusEl.textContent = "Geolocation not supported.";
+        return;
+      }
+      if (watchId != null) return;
+
+      follow = true;
+      centerBtn.textContent = "🎯 Follow me: ON";
+
+      watchId = navigator.geolocation.watchPosition(onPos, onErr, {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 15000
+      });
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      statusEl.textContent = "Tracking… move to see updates.";
+      requestDeviceOrientation(); // try to get heading if user allows
+    }
+
+    function stopTracking(){
+      if (watchId != null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      statusEl.textContent = "Stopped.";
+    }
+
+    function onPos(pos){
+      const { latitude, longitude, accuracy, heading, speed } = pos.coords;
+      lastCoord = [longitude, latitude];
+
+      // Prefer device heading if provided (e.g., during navigation); otherwise keep sensor-based heading
+      if (heading != null && isFinite(heading)) {
+        headingDeg = heading * 180 / Math.PI; // Some browsers give radians; others deg. Normalize:
+        if (heading > 2*Math.PI) headingDeg = heading; // if already degrees
+      }
+
+      updateMyFeatures(lastCoord, accuracy);
+
+      if (follow) {
+        // Smooth-ish camera update
+        map.easeTo({ center: lastCoord, duration: 600 });
+      }
+
+      // UI status
+      const acc = Math.round(accuracy);
+      statusEl.textContent = `Lat ${latitude.toFixed(6)}, Lng ${longitude.toFixed(6)} • ±${acc} m` + (speed!=null && isFinite(speed) ? ` • ${speed.toFixed(1)} m/s` : "");
+    }
+
+    function onErr(err){
+      console.warn(err);
+      statusEl.textContent = err.message || "Location error.";
+      if (err.code === 1) toast("Enable location permissions for precise tracking.");
+    }
+
+    // Toggle follow
+    centerBtn.addEventListener("click", () => {
+      follow = !follow;
+      centerBtn.textContent = `🎯 Follow me: ${follow ? "ON" : "OFF"}`;
+      if (follow && lastCoord) map.easeTo({ center: lastCoord, duration: 600 });
+    });
+
+    startBtn.addEventListener("click", startTracking);
+    stopBtn.addEventListener("click", stopTracking);
+
+    // Start automatically once map is ready (optional; comment if you prefer manual)
+    map.once("load", startTracking);
+
+    // ----- HEADING FROM DEVICE ORIENTATION (optional; iOS needs user gesture + permission) -----
+    function requestDeviceOrientation(){
+      const useOrientation = () => {
+        window.addEventListener("deviceorientation", (e) => {
+          // On many devices, 'alpha' is compass heading (0..360). It’s imperfect but useful.
+          if (e.absolute && e.alpha != null) {
+            headingDeg = 360 - e.alpha; // convert to map bearing (clockwise from north)
+          }
+        });
+      };
+
+      // iOS requires explicit permission
+      if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === "function") {
+        DeviceOrientationEvent.requestPermission().then(state=>{
+          if (state === "granted") useOrientation();
+        }).catch(()=>{/* ignore */});
+      } else {
+        // Android/desktop
+        useOrientation();
+      }
+    }
+  </script>
+</body>
+</html>
