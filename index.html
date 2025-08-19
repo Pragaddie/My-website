@@ -3,26 +3,32 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-  <title>Live Location Map</title>
+  <title>Live Location — 3D Avatars</title>
+
+  <!-- MapLibre -->
   <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet"/>
   <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
-  <!-- PMTiles is optional; keep it if you plan to use your own tiles later -->
-  <script src="https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js"></script>
+
+  <!-- Three.js -->
+  <script src="https://unpkg.com/three@0.161.0/build/three.min.js"></script>
+
+  <!-- Firebase (compat makes it simple in one file) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore-compat.js"></script>
+
   <style>
     html,body,#map{height:100%;margin:0}
     .hud{
-      position:fixed; left:12px; top:12px; z-index:10;
-      display:flex; gap:8px; flex-wrap:wrap;
+      position:fixed; left:12px; top:12px; z-index:10; display:flex; gap:8px; flex-wrap:wrap;
+      font:14px system-ui, -apple-system, "Segoe UI", Roboto, Arial;
     }
     .btn{
-      background:#0f172a; color:#e2e8f0; border:1px solid #1f2937;
-      padding:8px 12px; border-radius:10px; font:14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      cursor:pointer;
+      background:#0f172a; color:#e2e8f0; border:1px solid #1f2937; padding:8px 12px; border-radius:10px; cursor:pointer;
     }
     .btn[disabled]{opacity:.6; cursor:not-allowed}
-    .pill{
-      background:#0f172a; color:#9ca3af; border:1px solid #1f2937; padding:6px 10px; border-radius:999px; font:12px system-ui;
-    }
+    .pill{background:#0f172a; color:#9ca3af; border:1px solid #1f2937; padding:6px 10px; border-radius:999px}
+    .field{background:#0f172a; color:#e2e8f0; border:1px solid #1f2937; padding:7px 10px; border-radius:10px}
     .toast{
       position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
       background:#0f172a; color:#e2e8f0; border:1px solid #1f2937; padding:8px 12px; border-radius:10px; z-index:11;
@@ -31,111 +37,66 @@
 </head>
 <body>
   <div class="hud">
-    <button id="startBtn" class="btn">▶ Start tracking</button>
+    <input id="nameInput" class="field" placeholder="Display name" style="min-width:140px"/>
+    <select id="colorInput" class="field">
+      <option value="#60a5fa">Blue</option>
+      <option value="#34d399">Green</option>
+      <option value="#f59e0b">Orange</option>
+      <option value="#ef4444">Red</option>
+      <option value="#a78bfa">Purple</option>
+    </select>
+    <button id="saveProfile" class="btn">💾 Save profile</button>
+    <button id="startBtn" class="btn">▶ Start</button>
     <button id="stopBtn" class="btn" disabled>⏹ Stop</button>
-    <button id="centerBtn" class="btn">🎯 Follow me: ON</button>
-    <span id="status" class="pill">Waiting for location…</span>
+    <button id="followBtn" class="btn">🎯 Follow: ON</button>
+    <span id="status" class="pill">Init…</span>
   </div>
   <div id="map"></div>
 
   <script>
-    // ----- MAP SETUP -----
-    // If you later host your own vector tiles as PMTiles, uncomment the pmtiles source section below
-    // and comment out the OSM raster source.
-
-    // Optional: enable "pmtiles://" protocol (harmless if unused)
-    const pmProtocol = new pmtiles.Protocol();
-    maplibregl.addProtocol("pmtiles", pmProtocol.tile);
-
-    // Base style using OpenStreetMap raster tiles (no keys, quick start)
-    const style = {
-      "version": 8,
-      "sources": {
-        "osm": {
-          "type": "raster",
-          "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-          "tileSize": 256,
-          "attribution": "© OpenStreetMap contributors"
-        }
-        // --- To use your own vector tiles later (PMTiles), add:
-        // , "basemap": {
-        //   "type": "vector",
-        //   "tiles": ["pmtiles://ontario.pmtiles"],
-        //   "minzoom": 0, "maxzoom": 14,
-        //   "attribution": "© OpenStreetMap contributors"
-        // }
-      },
-      "layers": [
-        { "id": "osm", "type": "raster", "source": "osm" }
-        // If using vector tiles, add your vector layers here instead of the raster layer.
-      ]
+    // ---------- Firebase ----------
+    // TODO: paste your Firebase config here:
+    const firebaseConfig = {
+  apiKey: "AIzaSyClWN488bGSNubdX5V63u4j_HRT8jUdif4",
+  authDomain: "maps-46c58.firebaseapp.com",
+  projectId: "maps-46c58",
+  storageBucket: "maps-46c58.firebasestorage.app",
+  messagingSenderId: "334648884277",
+  appId: "1:334648884277:web:acbcc1a3c82b12e7e9c57c",
+  measurementId: "G-WVW7W93TB2"
     };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
 
+    // ---------- Map ----------
     const map = new maplibregl.Map({
       container: "map",
-      style,
-      center: [-79.3832, 43.6532], // Toronto as a default
-      zoom: 14,
-      pitch: 0,
-      bearing: 0
+      style: {
+        "version": 8,
+        "sources": {
+          "osm": {
+            "type": "raster",
+            "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+            "tileSize": 256,
+            "attribution": "© OpenStreetMap contributors"
+          }
+        },
+        "layers": [{ "id": "osm", "type": "raster", "source": "osm" }]
+      },
+      center: [-79.3832, 43.6532], // Toronto default
+      zoom: 15
     });
     map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-    // ----- LIVE LOCATION STATE -----
-    let watchId = null;
-    let follow = true; // auto-center
-    let lastCoord = null;
-    let headingDeg = null;
-
-    const startBtn = document.getElementById("startBtn");
-    const stopBtn  = document.getElementById("stopBtn");
-    const centerBtn= document.getElementById("centerBtn");
-    const statusEl = document.getElementById("status");
-
-    // Create layers for accuracy circle + position marker + heading
-    map.on("load", () => {
-      map.addSource("me", {
-        "type": "geojson",
-        "data": {"type":"FeatureCollection","features":[]}
-      });
-      map.addLayer({
-        "id": "me-accuracy",
-        "type": "fill",
-        "source": "me",
-        "paint": {
-          "fill-color": "#3b82f680",
-          "fill-opacity": 0.2
-        },
-        "filter": ["==", ["get","kind"], "accuracy"]
-      });
-      map.addLayer({
-        "id": "me-marker",
-        "type": "circle",
-        "source": "me",
-        "paint": {
-          "circle-radius": 7,
-          "circle-color": "#60a5fa",
-          "circle-stroke-color": "white",
-          "circle-stroke-width": 2
-        },
-        "filter": ["==", ["get","kind"], "point"]
-      });
-      map.addLayer({
-        "id": "me-heading",
-        "type": "symbol",
-        "source": "me",
-        "layout": {
-          "icon-image": "triangle-11",
-          "icon-size": 1.2,
-          "icon-rotate": ["get","heading"]
-        },
-        "paint": {},
-        "filter": ["==", ["get","kind"], "heading"]
-      });
-
-      // Provide a simple triangle icon via built-in sprite fallback
-      // (MapLibre will use a default if triangle-11 isn't present; acceptable for MVP)
-    });
+    // ---------- UI ----------
+    const nameInput = document.getElementById('nameInput');
+    const colorInput = document.getElementById('colorInput');
+    const saveProfile = document.getElementById('saveProfile');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn  = document.getElementById('stopBtn');
+    const followBtn= document.getElementById('followBtn');
+    const statusEl = document.getElementById('status');
 
     function toast(msg){
       const t=document.createElement("div");
@@ -143,152 +104,236 @@
       setTimeout(()=>t.remove(),1800);
     }
 
-    // Build GeoJSON from position + accuracy + heading
-    function updateMyFeatures(coords, accuracyMeters){
-      const [lng, lat] = coords;
-      const features = [];
+    // ---------- Three.js overlay as a MapLibre custom layer ----------
+    let threeLayer, scene, camera, renderer;
+    const avatars = new Map(); // uid -> { group, color, lastSeen }
+    let me = { uid: null, color: "#60a5fa", name: "", group: null };
 
-      // Accuracy circle as a polygon (approximate with 64 sides)
-      if (accuracyMeters && accuracyMeters > 0) {
-        const circle = circlePolygon([lng, lat], accuracyMeters);
-        features.push({
-          "type": "Feature",
-          "properties": {kind: "accuracy"},
-          "geometry": {"type":"Polygon","coordinates":[circle]}
-        });
+    function makeAvatarMesh(hexColor="#60a5fa"){
+      const group = new THREE.Group();
+      const bodyMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(hexColor) });
+      const white = new THREE.MeshStandardMaterial({ color: 0xffffff });
+
+      // Body (cylinder) & head (sphere)
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 1.2, 16), bodyMat);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.35, 20, 16), white);
+      body.position.y = 0.6;
+      head.position.y = 1.5;
+
+      // Direction arrow (cone)
+      const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.5, 16), bodyMat);
+      arrow.position.set(0, 1.2, 0.65);
+      arrow.rotation.x = Math.PI/2;
+
+      group.add(body, head, arrow);
+
+      // Soft light
+      const light = new THREE.DirectionalLight(0xffffff, 0.8);
+      light.position.set(3,5,2);
+      const amb = new THREE.AmbientLight(0xffffff, 0.6);
+      group.add(light, amb);
+
+      // Ground ring to show accuracy (scaled separately)
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent:true, opacity:0.35 });
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.6, 0.62, 32), ringMat);
+      ring.rotation.x = -Math.PI/2;
+      ring.name = "accuracyRing";
+      group.add(ring);
+
+      return group;
+    }
+
+    function mercatorFor(lng, lat, altitude=0){
+      return maplibregl.MercatorCoordinate.fromLngLat({lng, lat}, altitude);
+    }
+
+    function upsertAvatar(uid, lng, lat, headingDeg=0, accuracy=0, color="#60a5fa", name=""){
+      let a = avatars.get(uid);
+      if (!a) {
+        const group = makeAvatarMesh(color);
+        a = { group, color, lastSeen: Date.now(), name };
+        avatars.set(uid, a);
+        if (scene) scene.add(group);
       }
+      a.lastSeen = Date.now();
+      a.name = name;
 
-      // Dot
-      features.push({
-        "type": "Feature",
-        "properties": {kind: "point"},
-        "geometry": {"type":"Point","coordinates":[lng,lat]}
+      // Place & orient in mercator world
+      const mc = mercatorFor(lng, lat, 0);
+      const scale = mc.meterInMercatorCoordinateUnits();
+      a.group.position.set(mc.x, mc.y, mc.z);
+      a.group.scale.set(scale, scale, scale);
+      // rotate about vertical axis (y) so the arrow points toward heading
+      a.group.rotation.set(0, THREE.MathUtils.degToRad(-(headingDeg||0)), 0);
+
+      // Accuracy ring size (in meters → mercator units)
+      const ring = a.group.getObjectByName("accuracyRing");
+      if (ring) {
+        const r = Math.max(accuracy || 0, 5);
+        const ringScale = r / 0.6; // base radius is ~0.6m at scale 1
+        ring.scale.set(ringScale, ringScale, 1);
+      }
+    }
+
+    function removeStaleAvatars(){
+      const now = Date.now();
+      avatars.forEach((a, uid)=>{
+        if (now - a.lastSeen > 120000) { // 2 min stale
+          scene.remove(a.group);
+          avatars.delete(uid);
+        }
       });
-
-      // Heading arrow
-      if (headingDeg != null && isFinite(headingDeg)) {
-        features.push({
-          "type": "Feature",
-          "properties": {kind: "heading", heading: headingDeg},
-          "geometry": {"type":"Point","coordinates":[lng,lat]}
-        });
-      }
-
-      map.getSource("me")?.setData({"type":"FeatureCollection","features":features});
     }
 
-    // Create a rough circle polygon in WebMercator meters
-    function circlePolygon(centerLngLat, radiusMeters){
-      const [lng, lat] = centerLngLat;
-      const steps = 64;
-      const coords = [];
-      const earth = 6378137; // meters
-      const dLng = (m) => (m / (earth * Math.cos(lat * Math.PI/180))) * (180/Math.PI);
-      const dLat = (m) => (m / earth) * (180/Math.PI);
-      for (let i=0;i<=steps;i++){
-        const ang = (i/steps) * Math.PI*2;
-        coords.push([
-          lng + dLng(Math.sin(ang)*radiusMeters),
-          lat + dLat(Math.cos(ang)*radiusMeters)
-        ]);
+    // Custom layer definition
+    threeLayer = {
+      id: 'threejs',
+      type: 'custom',
+      renderingMode: '3d',
+      onAdd: function(map, gl){
+        scene = new THREE.Scene();
+        camera = new THREE.Camera();
+        renderer = new THREE.WebGLRenderer({ canvas: map.getCanvas(), context: gl, antialias: true });
+        renderer.autoClear = false;
+      },
+      render: function(gl, matrix){
+        // Sync camera
+        camera.projectionMatrix = new THREE.Matrix4().fromArray(matrix);
+        renderer.state.reset();
+        renderer.render(scene, camera);
+        map.triggerRepaint();
       }
-      return coords;
-    }
+    };
+    map.on('load', ()=> map.addLayer(threeLayer));
 
-    // ----- GEOLOCATION WATCH -----
+    // ---------- Geo tracking + heading ----------
+    let watchId = null, follow = true, lastLL = null, headingDeg = null;
+
     function startTracking(){
-      if (!("geolocation" in navigator)) {
-        statusEl.textContent = "Geolocation not supported.";
-        return;
-      }
+      if (!("geolocation" in navigator)) { statusEl.textContent = "No Geolocation."; return; }
       if (watchId != null) return;
-
-      follow = true;
-      centerBtn.textContent = "🎯 Follow me: ON";
-
+      follow = true; followBtn.textContent = "🎯 Follow: ON";
       watchId = navigator.geolocation.watchPosition(onPos, onErr, {
-        enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: 15000
+        enableHighAccuracy: true, maximumAge: 0, timeout: 15000
       });
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
-      statusEl.textContent = "Tracking… move to see updates.";
-      requestDeviceOrientation(); // try to get heading if user allows
+      requestDeviceOrientation();
+      startBtn.disabled = true; stopBtn.disabled = false;
+      statusEl.textContent = "Tracking…";
     }
-
     function stopTracking(){
-      if (watchId != null) {
-        navigator.geolocation.clearWatch(watchId);
-        watchId = null;
-      }
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
+      if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+      startBtn.disabled = false; stopBtn.disabled = true;
       statusEl.textContent = "Stopped.";
     }
-
     function onPos(pos){
       const { latitude, longitude, accuracy, heading, speed } = pos.coords;
-      lastCoord = [longitude, latitude];
+      lastLL = [longitude, latitude];
 
-      // Prefer device heading if provided (e.g., during navigation); otherwise keep sensor-based heading
-      if (heading != null && isFinite(heading)) {
-        headingDeg = heading * 180 / Math.PI; // Some browsers give radians; others deg. Normalize:
-        if (heading > 2*Math.PI) headingDeg = heading; // if already degrees
+      // Prefer browser heading if valid, else deviceorientation
+      if (heading != null && isFinite(heading) && heading > 0) {
+        headingDeg = heading; // some browsers already in degrees
       }
 
-      updateMyFeatures(lastCoord, accuracy);
+      // Center map if following
+      if (follow && lastLL) map.easeTo({ center: lastLL, duration: 500 });
 
-      if (follow) {
-        // Smooth-ish camera update
-        map.easeTo({ center: lastCoord, duration: 600 });
-      }
+      // Update my own avatar locally
+      upsertAvatar(me.uid || "me", longitude, latitude, headingDeg||0, accuracy||0, me.color, me.name);
 
-      // UI status
-      const acc = Math.round(accuracy);
-      statusEl.textContent = `Lat ${latitude.toFixed(6)}, Lng ${longitude.toFixed(6)} • ±${acc} m` + (speed!=null && isFinite(speed) ? ` • ${speed.toFixed(1)} m/s` : "");
+      // Write to Firestore (throttled)
+      schedulePresenceWrite({ latitude, longitude, accuracy, heading: headingDeg||0 });
+      statusEl.textContent = `Lat ${latitude.toFixed(6)}, Lng ${longitude.toFixed(6)} • ±${Math.round(accuracy||0)} m`;
     }
-
     function onErr(err){
-      console.warn(err);
       statusEl.textContent = err.message || "Location error.";
-      if (err.code === 1) toast("Enable location permissions for precise tracking.");
+      if (err.code === 1) toast("Allow location permissions.");
     }
 
-    // Toggle follow
-    centerBtn.addEventListener("click", () => {
+    followBtn.addEventListener('click', ()=>{
       follow = !follow;
-      centerBtn.textContent = `🎯 Follow me: ${follow ? "ON" : "OFF"}`;
-      if (follow && lastCoord) map.easeTo({ center: lastCoord, duration: 600 });
+      followBtn.textContent = `🎯 Follow: ${follow ? "ON" : "OFF"}`;
+      if (follow && lastLL) map.easeTo({ center: lastLL, duration: 500 });
     });
 
-    startBtn.addEventListener("click", startTracking);
-    stopBtn.addEventListener("click", stopTracking);
-
-    // Start automatically once map is ready (optional; comment if you prefer manual)
-    map.once("load", startTracking);
-
-    // ----- HEADING FROM DEVICE ORIENTATION (optional; iOS needs user gesture + permission) -----
     function requestDeviceOrientation(){
-      const useOrientation = () => {
-        window.addEventListener("deviceorientation", (e) => {
-          // On many devices, 'alpha' is compass heading (0..360). It’s imperfect but useful.
+      const useOrientation = ()=>{
+        window.addEventListener("deviceorientation", (e)=>{
           if (e.absolute && e.alpha != null) {
-            headingDeg = 360 - e.alpha; // convert to map bearing (clockwise from north)
+            headingDeg = 360 - e.alpha; // compass to map bearing
           }
         });
       };
-
-      // iOS requires explicit permission
       if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === "function") {
-        DeviceOrientationEvent.requestPermission().then(state=>{
-          if (state === "granted") useOrientation();
-        }).catch(()=>{/* ignore */});
-      } else {
-        // Android/desktop
-        useOrientation();
-      }
+        DeviceOrientationEvent.requestPermission().then(state=>{ if (state==="granted") useOrientation(); });
+      } else useOrientation();
     }
+
+    // ---------- Firebase auth + presence ----------
+    let writeTimer = null;
+    function schedulePresenceWrite(coords){
+      clearTimeout(writeTimer);
+      writeTimer = setTimeout(()=>writePresence(coords), 400); // throttle
+    }
+
+    async function writePresence({latitude, longitude, accuracy, heading}){
+      if (!me.uid) return;
+      try{
+        await db.collection('presence').doc(me.uid).set({
+          lat: latitude, lng: longitude, acc: accuracy||0,
+          heading: Math.round((heading||0)*100)/100,
+          color: me.color, name: me.name || "",
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge:true });
+      }catch(e){ console.warn(e); }
+    }
+
+    function startPresenceListener(){
+      db.collection('presence').onSnapshot((snap)=>{
+        snap.docChanges().forEach(ch=>{
+          const uid = ch.doc.id;
+          const d = ch.doc.data();
+          if (uid === me.uid) return; // already rendered locally
+          if (ch.type === "removed") {
+            const a = avatars.get(uid);
+            if (a) { scene.remove(a.group); avatars.delete(uid); }
+          } else {
+            upsertAvatar(uid, d.lng, d.lat, d.heading||0, d.acc||0, d.color||"#60a5fa", d.name||"");
+          }
+        });
+      });
+      // Clean stale every 30s
+      setInterval(removeStaleAvatars, 30000);
+    }
+
+    // Profile save
+    saveProfile.addEventListener('click', async ()=>{
+      me.name = nameInput.value.trim();
+      me.color = colorInput.value;
+      if (me.uid){
+        await db.collection('users').doc(me.uid).set({ name: me.name, color: me.color }, {merge:true});
+        toast("Profile saved");
+      }
+    });
+
+    // Start/stop
+    startBtn.addEventListener('click', startTracking);
+    stopBtn.addEventListener('click', stopTracking);
+
+    // Sign in anonymously and bootstrap
+    (async function init(){
+      const cred = await auth.signInAnonymously();
+      me.uid = cred.user.uid;
+      // Load profile if exists
+      const prof = await db.collection('users').doc(me.uid).get();
+      if (prof.exists){
+        const d = prof.data();
+        me.name = d.name || "";
+        me.color = d.color || me.color;
+        nameInput.value = me.name;
+        colorInput.value = me.color;
+      }
+      statusEl.textContent = "Signed in. Click ▶ Start.";
+    })();
   </script>
 </body>
 </html>
