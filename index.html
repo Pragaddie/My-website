@@ -5,11 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <title>Live Location — Blue Dots with Names</title>
 
-  <!-- MapLibre -->
   <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet"/>
   <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 
-  <!-- Firebase (compat for simple single-file) -->
   <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore-compat.js"></script>
@@ -25,9 +23,7 @@
     }
     header .brand{font-weight:700}
     header .spacer{flex:1}
-    .btn{
-      background:#0f172a;border:1px solid #1f2937;color:var(--text);padding:8px 12px;border-radius:10px;cursor:pointer
-    }
+    .btn{background:#0f172a;border:1px solid #1f2937;color:var(--text);padding:8px 12px;border-radius:10px;cursor:pointer}
     .btn[disabled]{opacity:.6;cursor:not-allowed}
     .pill{background:#0f172a;border:1px solid #1f2937;color:#9aa3af;padding:6px 10px;border-radius:999px}
     #map{flex:1;min-height:0}
@@ -39,11 +35,13 @@
     .row{display:flex;gap:8px;align-items:center}
     .col{display:flex;flex-direction:column;gap:8px}
     .center{display:flex;align-items:center;justify-content:center;height:100%}
-    .card{
-      width:min(420px,92%);background:var(--card);border:1px solid #1a2335;border-radius:16px;padding:16px
-    }
+    .card{width:min(420px,92%);background:var(--card);border:1px solid #1a2335;border-radius:16px;padding:16px}
     .link{color:#93c5fd;cursor:pointer}
-    .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#0f172a;border:1px solid #1f2937;color:var(--text);padding:8px 12px;border-radius:10px;z-index:999}
+    .toast{
+      position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
+      background:#0f172a;border:1px solid #1f2937;color:var(--text);padding:8px 12px;border-radius:10px;z-index:999
+    }
+    .warn{background:#7c2d12;border-color:#9a3412}
   </style>
 </head>
 <body>
@@ -91,25 +89,31 @@
   <!-- MAP -->
   <div id="map" style="display:none"></div>
 
-  <!-- Small legend / how-to -->
+  <!-- Legend -->
   <div id="legend" class="panel" style="display:none">
     <div class="col">
       <div><b>How it works</b></div>
       <div class="row"><span class="pill">1</span> Log in / Create account</div>
       <div class="row"><span class="pill">2</span> Click <b>Go live</b> (allow location)</div>
       <div class="row"><span class="pill">3</span> See all other live users as <b>blue dots</b> with their display names</div>
-      <div class="row"><span class="pill">4</span> <b>Stop</b> / Log out / close tab → you disappear instantly</div>
+      <div class="row"><span class="pill">4</span> Stop / Log out / close tab → you disappear</div>
     </div>
   </div>
 
 </div>
 
 <script>
+  // ---- Secure context check (must be https or localhost) ----
+  const SECURE_OK = location.protocol === 'https:' || location.hostname === 'localhost';
+  function toast(msg, warn=false){
+    const t=document.createElement('div'); t.className='toast'+(warn?' warn':''); t.textContent=msg; document.body.appendChild(t);
+    setTimeout(()=>t.remove(), 2500);
+  }
+  if (!SECURE_OK) {
+    toast('Enable HTTPS or use http://localhost — precise GPS needs a secure context.', true);
+  }
+
   // ---------------- Firebase ----------------
-  // 1) Create a Firebase project
-  // 2) Enable Authentication (Email/Password)
-  // 3) Enable Firestore (Native mode)
-  // 4) Paste your config below:
   const firebaseConfig = {
   apiKey: "AIzaSyClWN488bGSNubdX5V63u4j_HRT8jUdif4",
   authDomain: "maps-46c58.firebaseapp.com",
@@ -125,7 +129,6 @@
 
   // ---------------- UI helpers ----------------
   const $ = (id)=>document.getElementById(id);
-  function toast(msg){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(),1800); }
 
   // Screens
   const authScreens  = $('authScreens');
@@ -157,17 +160,17 @@
           "attribution": "© OpenStreetMap contributors"
         }
       },
-      "layers": [
-        { "id": "osm", "type": "raster", "source": "osm" }
-      ]
+      "layers": [{ "id": "osm", "type": "raster", "source": "osm" }]
     },
-    center: [-79.3832, 43.6532], // Toronto default
+    center: [-79.3832, 43.6532],
     zoom: 15
   });
   map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-  // Source to hold all people (including me)
+  // Source to hold everyone
+  let mapLoaded = false;
   map.on('load', () => {
+    mapLoaded = true;
     map.addSource('people', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
 
     // Blue dot
@@ -182,8 +185,7 @@
         'circle-stroke-width': 2
       }
     });
-
-    // Name labels (always shown above the dot)
+    // Name labels
     map.addLayer({
       id: 'people-labels',
       type: 'symbol',
@@ -192,50 +194,42 @@
         'text-field': ['get', 'name'],
         'text-font': ['Open Sans Semibold','Arial Unicode MS Regular'],
         'text-size': 12,
-        'text-offset': [0, 1.4],        // lift above the dot
+        'text-offset': [0, 1.4],
         'text-anchor': 'top',
         'text-allow-overlap': true,
         'text-ignore-placement': true
       },
-      paint: {
-        'text-color': '#e6e8ee',
-        'text-halo-color': '#0b0f16',
-        'text-halo-width': 1.2
-      }
+      paint: { 'text-color': '#e6e8ee', 'text-halo-color': '#0b0f16', 'text-halo-width': 1.2 }
     });
+
+    // If we already have my first fix before layers existed, render now
+    renderPeople();
   });
 
-  // Keep features in memory for fast updates
+  // In-memory features
   const featuresByUid = new Map();
   function renderPeople(){
-    const fc = { type:'FeatureCollection', features:[...featuresByUid.values()] };
     const src = map.getSource('people');
-    if (src) src.setData(fc);
+    if (!src) return;
+    const fc = { type:'FeatureCollection', features:[...featuresByUid.values()] };
+    src.setData(fc);
   }
 
   // ---------------- Auth flows ----------------
-  let my = { uid:null, name:'', live:false, watchId:null, follow:true };
+  let my = { uid:null, name:'', live:false, watchId:null, follow:true, lastLL:null };
   let presenceUnsub = null;
 
   auth.onAuthStateChanged(async (user)=>{
     if (user){
       my.uid = user.uid;
-      // Fetch profile name (prefer Auth displayName, else Firestore users doc)
-      my.name = user.displayName || '';
-      if (!my.name){
-        const doc = await db.collection('users').doc(my.uid).get();
-        my.name = (doc.exists && doc.data().name) ? doc.data().name : '';
-      }
-      // Show app UI
+      my.name = user.displayName || (await db.collection('users').doc(user.uid).get()).data()?.name || '';
       authScreens.style.display = 'none';
       mapDiv.style.display = 'block';
       legend.style.display = 'block';
       authedCtrls.style.display = 'flex';
       statusEl.textContent = 'Signed in';
-      // Center once someone goes live
     } else {
-      // Clean UI + state
-      stopLive(); // ensure we stop tracking and delete presence
+      await stopLive();
       featuresByUid.clear(); renderPeople();
       authedCtrls.style.display = 'none';
       mapDiv.style.display = 'none';
@@ -248,10 +242,8 @@
 
   loginBtn.onclick = async ()=>{
     loginErr.textContent = '';
-    try{
-      const cred = await auth.signInWithEmailAndPassword(loginEmail.value.trim(), loginPass.value);
-      toast('Logged in');
-    }catch(e){ loginErr.textContent = e.message; }
+    try { await auth.signInWithEmailAndPassword(loginEmail.value.trim(), loginPass.value); }
+    catch(e){ loginErr.textContent = e.message; }
   };
 
   signupBtn.onclick = async ()=>{
@@ -262,43 +254,33 @@
       const cred = await auth.createUserWithEmailAndPassword(suEmail.value.trim(), suPass.value);
       await cred.user.updateProfile({ displayName: name });
       await db.collection('users').doc(cred.user.uid).set({ name }, { merge:true });
-      toast('Account created. You can go live!');
-      // Switch to map view automatically (auth listener will handle)
     }catch(e){ signupErr.textContent = e.message; }
   };
 
-  logoutBtn.onclick = async ()=>{
-    await stopLive();
-    await auth.signOut();
-  };
+  logoutBtn.onclick = async ()=>{ await stopLive(); await auth.signOut(); };
 
-  // ---------------- Live location (only live users can see others) ----------------
+  // ---------------- Live location ----------------
   goLiveBtn.onclick = ()=> startLive();
   stopLiveBtn.onclick = ()=> stopLive();
   followBtn.onclick = ()=>{
     my.follow = !my.follow;
     followBtn.textContent = `🎯 Follow: ${my.follow ? 'ON' : 'OFF'}`;
-    if (my.follow && featuresByUid.has(my.uid)){
-      const f = featuresByUid.get(my.uid);
-      map.easeTo({ center: f.geometry.coordinates, duration: 500 });
-    }
+    if (my.follow && my.lastLL) map.easeTo({ center: my.lastLL, duration: 500 });
   };
 
   function startPresenceListener(){
-    // Only listen while I'm live (enforces "only live users see others")
     if (presenceUnsub) return;
     presenceUnsub = db.collection('presence').onSnapshot((snap)=>{
       const now = Date.now();
       snap.docChanges().forEach(ch=>{
         const uid = ch.doc.id; const d = ch.doc.data();
-        if (!d || !d.lat || !d.lng) return;
-        // Hide stale (> 30s old)
+        if (!d || typeof d.lat!=='number' || typeof d.lng!=='number') return;
         const ts = d.updatedAt?.toMillis?.() ? d.updatedAt.toMillis() : now;
-        if (now - ts > 30000) return;
+        if (now - ts > 30000) { featuresByUid.delete(uid); return; }
 
-        if (ch.type === 'removed'){
+        if (ch.type === 'removed') {
           featuresByUid.delete(uid);
-        }else{
+        } else {
           featuresByUid.set(uid, {
             type:'Feature',
             properties:{ uid, name: d.name || '' },
@@ -309,63 +291,53 @@
       renderPeople();
     });
   }
-
-  function stopPresenceListener(){
-    if (presenceUnsub){ presenceUnsub(); presenceUnsub = null; }
-  }
+  function stopPresenceListener(){ if (presenceUnsub){ presenceUnsub(); presenceUnsub=null; } }
 
   function startLive(){
-    if (!auth.currentUser){ toast('Log in first'); return; }
+    if (!auth.currentUser){ return; }
+    if (!SECURE_OK){ toast('Use HTTPS or localhost for GPS.', true); }
     if (my.watchId != null) return;
 
-    // Start listening to others (only when I'm live)
-    startPresenceListener();
+    startPresenceListener(); // only while live
 
-    // Start GPS stream
     my.watchId = navigator.geolocation.watchPosition(onPos, onErr, {
       enableHighAccuracy:true, maximumAge:0, timeout:15000
     });
 
     goLiveBtn.disabled = true; stopLiveBtn.disabled = false;
-    statusEl.textContent = 'Live (sharing location)…';
+    statusEl.textContent = 'Live (sharing)…';
     my.live = true;
   }
 
   async function stopLive(){
-    // Stop GPS
     if (my.watchId != null){ navigator.geolocation.clearWatch(my.watchId); my.watchId = null; }
-    // Remove my presence doc
-    if (my.uid){
-      try{ await db.collection('presence').doc(my.uid).delete(); }catch(e){}
-    }
-    // Stop listening to others
+    if (my.uid){ try{ await db.collection('presence').doc(my.uid).delete(); }catch(e){} }
     stopPresenceListener();
-    // Remove my local feature
     featuresByUid.delete(my.uid); renderPeople();
-
     goLiveBtn.disabled = false; stopLiveBtn.disabled = true;
-    statusEl.textContent = 'Signed in';
+    statusEl.textContent = auth.currentUser ? 'Signed in' : 'Signed out';
     my.live = false;
   }
 
-  // Try to clean up if the tab closes
-  window.addEventListener('beforeunload', ()=>{ if (my.live) db.collection('presence').doc(my.uid).delete(); });
+  // Remove presence on tab close
+  window.addEventListener('beforeunload', ()=>{ if (my.live && my.uid) db.collection('presence').doc(my.uid).delete(); });
 
   let writeTimer=null;
   function onPos(pos){
     const { latitude, longitude, accuracy } = pos.coords;
+    my.lastLL = [longitude, latitude];
 
-    // Update my local feature immediately
+    // Update my local dot immediately
     featuresByUid.set(my.uid, {
       type:'Feature',
       properties:{ uid: my.uid, name: my.name || 'Me' },
       geometry:{ type:'Point', coordinates:[longitude, latitude] }
     });
-    renderPeople();
-
-    if (my.follow) map.easeTo({ center:[longitude, latitude], duration: 500 });
+    renderPeople();                   // <-- force render every fix
+    if (my.follow) map.easeTo({ center:[longitude, latitude], duration: 400 });
 
     statusEl.textContent = `Live • ±${Math.round(accuracy||0)} m`;
+
     // Throttle Firestore writes
     clearTimeout(writeTimer);
     writeTimer = setTimeout(()=> {
@@ -374,11 +346,11 @@
         name: my.name || '',
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge:true });
-    }, 350);
+    }, 300);
   }
   function onErr(err){
     statusEl.textContent = err.message || 'Location error';
-    if (err.code === 1) toast('Allow location permissions.');
+    if (err.code === 1) toast('Allow location permissions.', true);
   }
 </script>
 </body>
