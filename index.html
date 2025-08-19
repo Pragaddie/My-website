@@ -103,15 +103,13 @@
 </div>
 
 <script>
-  // ---- Secure context check (must be https or localhost) ----
+  // ---- Secure context check ----
   const SECURE_OK = location.protocol === 'https:' || location.hostname === 'localhost';
   function toast(msg, warn=false){
     const t=document.createElement('div'); t.className='toast'+(warn?' warn':''); t.textContent=msg; document.body.appendChild(t);
     setTimeout(()=>t.remove(), 2500);
   }
-  if (!SECURE_OK) {
-    toast('Enable HTTPS or use http://localhost — precise GPS needs a secure context.', true);
-  }
+  if (!SECURE_OK) toast('Use HTTPS or http://localhost — precise GPS needs a secure context.', true);
 
   // ---------------- Firebase ----------------
   const firebaseConfig = {
@@ -152,6 +150,7 @@
     container: "map",
     style: {
       "version": 8,
+      "glyphs": "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",   // <-- REQUIRED for text labels
       "sources": {
         "osm": {
           "type": "raster",
@@ -167,17 +166,29 @@
   });
   map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-  // Source to hold everyone
   let mapLoaded = false;
   map.on('load', () => {
     mapLoaded = true;
     map.addSource('people', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+
+    // Accuracy circle (meters -> polygon)
+    map.addLayer({
+      id: 'people-accuracy',
+      type: 'fill',
+      source: 'people',
+      filter: ['==', ['get','kind'], 'acc'],
+      paint: {
+        'fill-color': '#2F80ED',
+        'fill-opacity': 0.15
+      }
+    });
 
     // Blue dot
     map.addLayer({
       id: 'people-dots',
       type: 'circle',
       source: 'people',
+      filter: ['==', ['get','kind'], 'point'],
       paint: {
         'circle-radius': 8,
         'circle-color': '#2F80ED',
@@ -185,44 +196,92 @@
         'circle-stroke-width': 2
       }
     });
-    // Name labels
+
+    // Name labels (hovering above dot)
     map.addLayer({
       id: 'people-labels',
       type: 'symbol',
       source: 'people',
+      filter: ['==', ['get','kind'], 'point'],
       layout: {
         'text-field': ['get', 'name'],
         'text-font': ['Open Sans Semibold','Arial Unicode MS Regular'],
         'text-size': 12,
-        'text-offset': [0, 1.4],
+        'text-offset': [0, 1.4],     // move above the dot
         'text-anchor': 'top',
         'text-allow-overlap': true,
         'text-ignore-placement': true
       },
-      paint: { 'text-color': '#e6e8ee', 'text-halo-color': '#0b0f16', 'text-halo-width': 1.2 }
+      paint: {
+        'text-color': '#e6e8ee',
+        'text-halo-color': '#0b0f16',
+        'text-halo-width': 1.2
+      }
     });
 
-    // If we already have my first fix before layers existed, render now
-    renderPeople();
+    renderPeople(); // if we had early data
   });
 
-  // In-memory features
-  const featuresByUid = new Map();
+  // In-memory "users" map so we can build both dot + accuracy polygon
+  const users = new Map(); // uid -> {lng,lat,name,acc,ts}
+
+  function circlePolygon([lng,lat], radiusMeters){
+    const steps = 64, pts = [];
+    const R = 6378137;
+    const dLng = m => (m / (R * Math.cos(lat*Math.PI/180))) * (180/Math.PI);
+    const dLat = m => (m / R) * (180/Math.PI);
+    for (let i=0;i<=steps;i++){
+      const a = (i/steps) * Math.PI*2;
+      pts.push([ lng + dLng(Math.sin(a)*radiusMeters), lat + dLat(Math.cos(a)*radiusMeters) ]);
+    }
+    return pts;
+  }
+
   function renderPeople(){
-    const src = map.getSource('people');
-    if (!src) return;
-    const fc = { type:'FeatureCollection', features:[...featuresByUid.values()] };
-    src.setData(fc);
+    const src = map.getSource('people'); if (!src) return;
+    const feats = [];
+    const now = Date.now();
+    users.forEach((u, uid)=>{
+      // Hide stale > 30s
+      if (now - u.ts > 30000) return;
+      // accuracy polygon (optional)
+      const acc = Math.max(0, Number(u.acc||0));
+      if (acc > 0){
+        feats.push({
+          type:'Feature',
+          properties:{ uid, kind:'acc' },
+          geometry:{ type:'Polygon', coordinates:[ circlePolygon([u.lng,u.lat], acc) ] }
+        });
+      }
+      // dot + label
+      feats.push({
+        type:'Feature',
+        properties:{ uid, kind:'point', name: u.name || '' },
+        geometry:{ type:'Point', coordinates:[u.lng,u.lat] }
+      });
+    });
+    src.setData({ type:'FeatureCollection', features:feats });
   }
 
   // ---------------- Auth flows ----------------
   let my = { uid:null, name:'', live:false, watchId:null, follow:true, lastLL:null };
   let presenceUnsub = null;
 
+  function deriveName(user, fallbackDoc){
+    if (user?.displayName) return user.displayName;
+    if (fallbackDoc?.exists && fallbackDoc.data()?.name) return fallbackDoc.data().name;
+    if (user?.email) return user.email.split('@')[0];      // fallback: email local-part
+    return 'Me';
+  }
+
   auth.onAuthStateChanged(async (user)=>{
     if (user){
-      my.uid = user.uid;
-      my.name = user.displayName || (await db.collection('users').doc(user.uid).get()).data()?.name || '';
+      const profDoc = await db.collection('users').doc(user.uid).get();
+      my.uid  = user.uid;
+      my.name = deriveName(user, profDoc);
+      // Ensure Firestore has the name for others to read
+      await db.collection('users').doc(user.uid).set({ name: my.name }, { merge:true });
+
       authScreens.style.display = 'none';
       mapDiv.style.display = 'block';
       legend.style.display = 'block';
@@ -230,7 +289,7 @@
       statusEl.textContent = 'Signed in';
     } else {
       await stopLive();
-      featuresByUid.clear(); renderPeople();
+      users.clear(); renderPeople();
       authedCtrls.style.display = 'none';
       mapDiv.style.display = 'none';
       legend.style.display = 'none';
@@ -240,12 +299,22 @@
     }
   });
 
+  // Auth UI
+  const loginBtn = document.getElementById('loginBtn');
+  const loginEmail = document.getElementById('loginEmail');
+  const loginPass = document.getElementById('loginPass');
+  const loginErr  = document.getElementById('loginErr');
   loginBtn.onclick = async ()=>{
     loginErr.textContent = '';
     try { await auth.signInWithEmailAndPassword(loginEmail.value.trim(), loginPass.value); }
     catch(e){ loginErr.textContent = e.message; }
   };
 
+  const signupBtn = document.getElementById('signupBtn');
+  const suName = document.getElementById('suName');
+  const suEmail = document.getElementById('suEmail');
+  const suPass = document.getElementById('suPass');
+  const signupErr= document.getElementById('signupErr');
   signupBtn.onclick = async ()=>{
     signupErr.textContent = '';
     const name = suName.value.trim();
@@ -257,9 +326,15 @@
     }catch(e){ signupErr.textContent = e.message; }
   };
 
+  const logoutBtn = document.getElementById('logoutBtn');
   logoutBtn.onclick = async ()=>{ await stopLive(); await auth.signOut(); };
 
   // ---------------- Live location ----------------
+  const goLiveBtn = document.getElementById('goLiveBtn');
+  const stopLiveBtn= document.getElementById('stopLiveBtn');
+  const followBtn  = document.getElementById('followBtn');
+  const statusEl   = document.getElementById('status');
+
   goLiveBtn.onclick = ()=> startLive();
   stopLiveBtn.onclick = ()=> stopLive();
   followBtn.onclick = ()=>{
@@ -276,17 +351,13 @@
         const uid = ch.doc.id; const d = ch.doc.data();
         if (!d || typeof d.lat!=='number' || typeof d.lng!=='number') return;
         const ts = d.updatedAt?.toMillis?.() ? d.updatedAt.toMillis() : now;
-        if (now - ts > 30000) { featuresByUid.delete(uid); return; }
-
-        if (ch.type === 'removed') {
-          featuresByUid.delete(uid);
-        } else {
-          featuresByUid.set(uid, {
-            type:'Feature',
-            properties:{ uid, name: d.name || '' },
-            geometry:{ type:'Point', coordinates:[d.lng, d.lat] }
-          });
-        }
+        // store/update user
+        users.set(uid, {
+          lng: d.lng, lat: d.lat,
+          name: d.name || '', acc: d.acc || 0,
+          ts
+        });
+        if (ch.type === 'removed') users.delete(uid);
       });
       renderPeople();
     });
@@ -295,11 +366,19 @@
 
   function startLive(){
     if (!auth.currentUser){ return; }
-    if (!SECURE_OK){ toast('Use HTTPS or localhost for GPS.', true); }
+    if (!SECURE_OK) toast('Use HTTPS or localhost for precise GPS.', true);
     if (my.watchId != null) return;
 
-    startPresenceListener(); // only while live
+    startPresenceListener(); // only when live
 
+    // First: try a "precision first fix" with a longer timeout
+    navigator.geolocation.getCurrentPosition(
+      (pos)=>{ onPos(pos, true); },
+      (err)=>{ /* ignore; watch will still start */ },
+      { enableHighAccuracy:true, timeout:20000, maximumAge:0 }
+    );
+
+    // Then: continuous updates
     my.watchId = navigator.geolocation.watchPosition(onPos, onErr, {
       enableHighAccuracy:true, maximumAge:0, timeout:15000
     });
@@ -313,28 +392,28 @@
     if (my.watchId != null){ navigator.geolocation.clearWatch(my.watchId); my.watchId = null; }
     if (my.uid){ try{ await db.collection('presence').doc(my.uid).delete(); }catch(e){} }
     stopPresenceListener();
-    featuresByUid.delete(my.uid); renderPeople();
+    users.delete(my.uid); renderPeople();
     goLiveBtn.disabled = false; stopLiveBtn.disabled = true;
     statusEl.textContent = auth.currentUser ? 'Signed in' : 'Signed out';
     my.live = false;
   }
 
-  // Remove presence on tab close
+  // Clean up presence on tab close
   window.addEventListener('beforeunload', ()=>{ if (my.live && my.uid) db.collection('presence').doc(my.uid).delete(); });
 
   let writeTimer=null;
-  function onPos(pos){
+  function onPos(pos, isFirst=false){
     const { latitude, longitude, accuracy } = pos.coords;
     my.lastLL = [longitude, latitude];
 
-    // Update my local dot immediately
-    featuresByUid.set(my.uid, {
-      type:'Feature',
-      properties:{ uid: my.uid, name: my.name || 'Me' },
-      geometry:{ type:'Point', coordinates:[longitude, latitude] }
-    });
-    renderPeople();                   // <-- force render every fix
-    if (my.follow) map.easeTo({ center:[longitude, latitude], duration: 400 });
+    // ensure my display name is set
+    const myDisplay = my.name && my.name.trim() ? my.name : (auth.currentUser?.email ? auth.currentUser.email.split('@')[0] : 'Me');
+
+    // Update local store for me
+    users.set(my.uid, { lng: longitude, lat: latitude, name: myDisplay, acc: accuracy||0, ts: Date.now() });
+    renderPeople();
+
+    if (my.follow || isFirst) map.easeTo({ center:[longitude, latitude], duration: isFirst ? 0 : 400 });
 
     statusEl.textContent = `Live • ±${Math.round(accuracy||0)} m`;
 
@@ -343,11 +422,12 @@
     writeTimer = setTimeout(()=> {
       db.collection('presence').doc(my.uid).set({
         lat: latitude, lng: longitude, acc: accuracy||0,
-        name: my.name || '',
+        name: myDisplay,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge:true });
     }, 300);
   }
+
   function onErr(err){
     statusEl.textContent = err.message || 'Location error';
     if (err.code === 1) toast('Allow location permissions.', true);
