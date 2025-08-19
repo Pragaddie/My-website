@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Minimal Blue Dot + Name</title>
+<link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+<style>
+  html,body,#map{height:100%;margin:0}
+  .toast{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);
+         background:#0f172a;color:#e6e8f0;border:1px solid #1f2937;padding:8px 12px;border-radius:10px}
+</style>
+<div id="map"></div>
+<div id="msg" class="toast" style="display:none"></div>
+<script>
+  const SECURE = location.protocol==='https:' || location.hostname==='localhost';
+  const msg = (t)=>{ const m=document.getElementById('msg'); m.textContent=t; m.style.display='block'; setTimeout(()=>m.style.display='none', 3000); };
+  if(!SECURE) msg('Tip: use HTTPS or http://localhost for precise GPS');
+
+  // 1) Map with glyphs (labels need this)
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: {
+      "version": 8,
+      "glyphs": "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+      "sources": {
+        "osm": { "type":"raster", "tiles":["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], "tileSize":256,
+                 "attribution":"© OpenStreetMap contributors" }
+      },
+      "layers": [{ "id":"osm", "type":"raster", "source":"osm" }]
+    },
+    center: [-79.3832,43.6532], zoom: 15
+  });
+  map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+  function ensureLayers(){
+    if(!map.getSource('me')){
+      map.addSource('me',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+    }
+    // soft halo
+    if(!map.getLayer('me-halo')){
+      map.addLayer({
+        id:'me-halo', type:'circle', source:'me',
+        filter:['==',['get','kind'],'point'],
+        paint:{ 'circle-radius':16, 'circle-color':'#2F80ED', 'circle-opacity':0.18 }
+      });
+    }
+    // blue dot
+    if(!map.getLayer('me-dot')){
+      map.addLayer({
+        id:'me-dot', type:'circle', source:'me',
+        filter:['==',['get','kind'],'point'],
+        paint:{ 'circle-radius':8, 'circle-color':'#2F80ED', 'circle-stroke-color':'#fff', 'circle-stroke-width':2 }
+      });
+    }
+    // name label (uses built-in glyphs)
+    if(!map.getLayer('me-label')){
+      map.addLayer({
+        id:'me-label', type:'symbol', source:'me',
+        filter:['==',['get','kind'],'point'],
+        layout:{
+          'text-field':['get','name'],
+          'text-font':['Open Sans Regular','Arial Unicode MS Regular'],
+          'text-size':12, 'text-offset':[0,1.4], 'text-anchor':'top',
+          'text-allow-overlap':true, 'text-ignore-placement':true
+        },
+        paint:{ 'text-color':'#e6e8ee','text-halo-color':'#0b0f16','text-halo-width':1.2 }
+      });
+    }
+  }
+
+  function setMe(lng,lat,name){
+    ensureLayers();
+    const src = map.getSource('me');
+    const fc = {
+      type:'FeatureCollection',
+      features:[{ type:'Feature', properties:{kind:'point', name:name||'Me'},
+                  geometry:{type:'Point', coordinates:[lng,lat]} }]
+    };
+    src.setData(fc);
+  }
+
+  let firstCentered = false;
+  map.on('load', ()=>{
+    if(!('geolocation' in navigator)){
+      msg('Geolocation not supported in this browser'); return;
+    }
+    // first precise fix
+    navigator.geolocation.getCurrentPosition(pos=>{
+      const {latitude,longitude} = pos.coords;
+      setMe(longitude, latitude, 'My Name');
+      map.jumpTo({center:[longitude,latitude], zoom:16});
+      firstCentered = true;
+    }, err=>{
+      msg(err.message || 'Location error');
+    }, {enableHighAccuracy:true, timeout:20000, maximumAge:0});
+
+    // continuous updates
+    navigator.geolocation.watchPosition(pos=>{
+      const {latitude,longitude} = pos.coords;
+      setMe(longitude, latitude, 'My Name');
+      if(!firstCentered){
+        map.easeTo({center:[longitude,latitude], duration:400});
+        firstCentered = true;
+      }
+    }, err=>{ msg(err.message || 'Location error'); }, {enableHighAccuracy:true, maximumAge:0, timeout:15000});
+  });
+</script>
