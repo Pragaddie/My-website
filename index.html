@@ -1,116 +1,98 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-  <title>Live Location — Classic Blue Dot + Name</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>Live Location — Blue Dot + Name</title>
 
-  <!-- MapLibre -->
-  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet"/>
-  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+<link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 
-  <!-- Firebase (compat for one-file simplicity) -->
-  <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore-compat.js"></script>
 
-  <style>
-    :root { --bg:#0b0f16; --card:#101827; --muted:#9aa3b2; --text:#e6e8ee; --accent:#2F80ED; }
-    *{box-sizing:border-box}
-    html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px system-ui,-apple-system,Segoe UI,Roboto,Arial}
-    #app{height:100%;display:flex;flex-direction:column}
-    header{
-      height:56px;display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #121a2a;
-      background:linear-gradient(180deg,rgba(8,11,18,.95),rgba(8,11,18,.6));backdrop-filter:blur(6px);z-index:10
-    }
-    header .brand{font-weight:700}
-    header .spacer{flex:1}
-    .btn{background:#0f172a;border:1px solid #1f2937;color:var(--text);padding:8px 12px;border-radius:10px;cursor:pointer}
-    .btn[disabled]{opacity:.6;cursor:not-allowed}
-    .pill{background:#0f172a;border:1px solid #1f2937;color:#9aa3af;padding:6px 10px;border-radius:999px}
-    #map{flex:1;min-height:0}
-    .panel{
-      position:fixed;inset:auto 12px 12px auto;width:320px;max-width:calc(100% - 24px);
-      background:var(--card);border:1px solid #1a2335;border-radius:16px;padding:12px;z-index:20
-    }
-    .field{width:100%;padding:10px;border-radius:10px;border:1px solid #243045;background:#0f172a;color:var(--text)}
-    .row{display:flex;gap:8px;align-items:center}
-    .col{display:flex;flex-direction:column;gap:8px}
-    .center{display:flex;align-items:center;justify-content:center;height:100%}
-    .card{width:min(420px,92%);background:var(--card);border:1px solid #1a2335;border-radius:16px;padding:16px}
-    .link{color:#93c5fd;cursor:pointer}
-    .toast{
-      position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
-      background:#0f172a;border:1px solid #1f2937;color:var(--text);padding:8px 12px;border-radius:10px;z-index:999
-    }
-    .warn{background:#7c2d12;border-color:#9a3412}
-  </style>
+<style>
+  :root { --bg:#0b0f16; --panel:#101827; --muted:#9aa3b2; --text:#e6e8ee; }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px system-ui,-apple-system,Segoe UI,Roboto,Arial}
+  #map{height:100%}
+  header{
+    position:fixed; inset:0 0 auto 0; height:64px; display:flex; align-items:center; gap:8px;
+    padding:8px 12px; background:rgba(10,15,25,.7); backdrop-filter:blur(6px); border-bottom:1px solid #132037; z-index:5;
+  }
+  .brand{font-weight:700}
+  .spacer{flex:1}
+  .btn{background:#0f172a;border:1px solid #1f2937;color:#e6e8ee;padding:8px 12px;border-radius:10px;cursor:pointer}
+  .btn[disabled]{opacity:.6;cursor:not-allowed}
+  .field{padding:8px 10px;border-radius:10px;border:1px solid #243045;background:#0f172a;color:#e6e8ee}
+  .pill{background:#0f172a;border:1px solid #1f2937;color:#9aa3af;padding:6px 10px;border-radius:999px}
+  .panel{
+    position:fixed; right:12px; bottom:12px; z-index:5; background:var(--panel); border:1px solid #1a2335; border-radius:14px; padding:10px;
+  }
+  .auth-card{
+    position:fixed; inset:64px 0 0 0; display:flex; align-items:center; justify-content:center;
+  }
+  .card{background:var(--panel); border:1px solid #1a2335; border-radius:14px; padding:16px; width:min(420px,92%)}
+  .row{display:flex; gap:8px; align-items:center}
+  .col{display:flex; flex-direction:column; gap:8px}
+  .toast{
+    position:fixed; left:50%; bottom:16px; transform:translateX(-50%);
+    background:#0f172a; color:#e6e8ee; border:1px solid #1f2937; padding:8px 12px; border-radius:10px; z-index:99;
+  }
+</style>
 </head>
 <body>
-<div id="app">
 
-  <header>
-    <div class="brand">LiveMap</div>
-    <div class="spacer"></div>
-    <div id="authedControls" style="display:none; gap:8px" class="row">
-      <button id="goLiveBtn"  class="btn" type="button">▶ Go live</button>
-      <button id="stopLiveBtn" class="btn" type="button" disabled>⏹ Stop</button>
-      <button id="followBtn"   class="btn" type="button">🎯 Follow: ON</button>
-      <button id="logoutBtn"   class="btn" type="button">🚪 Log out</button>
-      <span id="status" class="pill">Signed in</span>
-    </div>
-  </header>
+<header>
+  <div class="brand">LiveMap</div>
+  <div class="spacer"></div>
 
-  <!-- AUTH SCREENS -->
-  <div id="authScreens" class="center">
-    <!-- LOGIN -->
-    <div id="loginCard" class="card">
-      <h3 style="margin:0 0 8px">Log in</h3>
-      <div class="col">
-        <input id="loginEmail" class="field" type="email" placeholder="Email"/>
-        <input id="loginPass"  class="field" type="password" placeholder="Password"/>
-        <button id="loginBtn"  class="btn" type="button">Log in</button>
-        <div style="color:var(--muted)">No account? <span id="toSignup" class="link">Create one</span></div>
-        <div id="loginErr" style="color:#fca5a5"></div>
-      </div>
-    </div>
-    <!-- SIGNUP -->
-    <div id="signupCard" class="card" style="display:none">
-      <h3 style="margin:0 0 8px">Create account</h3>
-      <div class="col">
-        <input id="suName"  class="field" placeholder="Display name (shown above your dot)"/>
-        <input id="suEmail" class="field" type="email" placeholder="Email"/>
-        <input id="suPass"  class="field" type="password" placeholder="Password (min 6 chars)"/>
-        <button id="signupBtn" class="btn" type="button">Sign up</button>
-        <div style="color:var(--muted)">Have an account? <span id="toLogin" class="link">Log in</span></div>
-        <div id="signupErr" style="color:#fca5a5"></div>
-      </div>
-    </div>
+  <div id="authControls" class="row" style="display:none">
+    <input id="displayName" class="field" placeholder="Display name" style="min-width:160px"/>
+    <button id="saveName" class="btn" type="button">💾 Save</button>
+    <button id="goLive" class="btn" type="button">▶ Go live</button>
+    <button id="stopLive" class="btn" type="button" disabled>⏹ Stop</button>
+    <button id="logout" class="btn" type="button">🚪 Log out</button>
+    <span id="status" class="pill">Signed in</span>
   </div>
+</header>
 
-  <!-- MAP -->
-  <div id="map" style="display:none"></div>
-
-  <!-- Legend -->
-  <div id="legend" class="panel" style="display:none">
+<div id="authScreen" class="auth-card">
+  <div class="card">
+    <h3 style="margin:0 0 8px">Sign in</h3>
     <div class="col">
-      <div><b>How it works</b></div>
-      <div class="row"><span class="pill">1</span> Log in / Create account</div>
-      <div class="row"><span class="pill">2</span> Click <b>Go live</b> (allow location)</div>
-      <div class="row"><span class="pill">3</span> See all other live users as <b>blue dots</b> with their display names</div>
-      <div class="row"><span class="pill">4</span> Stop / Log out / close tab → you disappear</div>
+      <input id="email" class="field" type="email" placeholder="Email"/>
+      <input id="pass"  class="field" type="password" placeholder="Password"/>
+      <div class="row">
+        <button id="loginBtn"  class="btn" type="button">Log in</button>
+        <button id="signupBtn" class="btn" type="button">Create account</button>
+      </div>
+      <div id="authErr" style="color:#fca5a5"></div>
+      <div style="color:var(--muted)">On first signup, you can set your display name after login (top right).</div>
     </div>
   </div>
-
 </div>
 
-<script>
-  // ---------- secure context hint ----------
-  const SECURE_OK = location.protocol === 'https:' || location.hostname === 'localhost';
-  function toast(msg, warn=false){ const t=document.createElement('div'); t.className='toast'+(warn?' warn':''); t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(), 2600); }
-  if (!SECURE_OK) toast('Use HTTPS or http://localhost — precise GPS needs a secure context.', true);
+<div id="map"></div>
 
-  // ---------- Firebase (your project: maps-46c58) ----------
+<div class="panel" id="legend" style="display:none">
+  <div><b>How it works</b></div>
+  <div>• Log in → set your display name → <b>Go live</b></div>
+  <div>• Your dot + name shows immediately</div>
+  <div>• Other live users appear too</div>
+  <div>• Stop/Logout/Close tab → you disappear</div>
+</div>
+
+<div id="toast" class="toast" style="display:none"></div>
+
+<script>
+  // --- helpers ---
+  const SECURE = location.protocol==='https:' || location.hostname==='localhost';
+  function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2200); }
+  if(!SECURE) showToast('Tip: use HTTPS or http://localhost for precise GPS');
+
+  // --- Firebase (your project: maps-46c58) ---
   const firebaseConfig = {
     apiKey: "AIzaSyClWN488bGSNubdX5V63u4j_HRT8jUdif4",
     authDomain: "maps-46c58.firebaseapp.com",
@@ -121,267 +103,249 @@
     measurementId: "G-WVW7W93TB2"
   };
   firebase.initializeApp(firebaseConfig);
-  const auth = firebase.auth();
-  const db   = firebase.firestore();
+  const auth=firebase.auth(), db=firebase.firestore();
 
-  // ---------- DOM refs ----------
+  // --- DOM ---
   const $ = (id)=>document.getElementById(id);
-  const authScreens=$('authScreens'), loginCard=$('loginCard'), signupCard=$('signupCard');
-  const mapDiv=$('map'), legend=$('legend'), authedCtrls=$('authedControls');
-  const loginEmail=$('loginEmail'), loginPass=$('loginPass'), loginBtn=$('loginBtn'), loginErr=$('loginErr');
-  const suName=$('suName'), suEmail=$('suEmail'), suPass=$('suPass'), signupBtn=$('signupBtn'), signupErr=$('signupErr');
-  const toSignup=$('toSignup'), toLogin=$('toLogin');
-  const goLiveBtn=$('goLiveBtn'), stopLiveBtn=$('stopLiveBtn'), followBtn=$('followBtn'), logoutBtn=$('logoutBtn'), statusEl=$('status');
+  const authScreen=$('authScreen'), authControls=$('authControls'), legend=$('legend');
+  const email=$('email'), pass=$('pass'), loginBtn=$('loginBtn'), signupBtn=$('signupBtn'), authErr=$('authErr');
+  const displayName=$('displayName'), saveName=$('saveName'), goLive=$('goLive'), stopLive=$('stopLive'), logout=$('logout'), statusEl=$('status');
 
-  // attach handlers ASAP
-  window.addEventListener('DOMContentLoaded', () => {
-    toSignup.addEventListener('click', ()=>{ loginCard.style.display='none'; signupCard.style.display='block'; });
-    toLogin .addEventListener('click', ()=>{ signupCard.style.display='none'; loginCard.style.display='block'; });
-    loginBtn.addEventListener('click', onLogin);
-    signupBtn.addEventListener('click', onSignup);
-    logoutBtn.addEventListener('click', async ()=>{ await stopLive(); await auth.signOut(); });
-    goLiveBtn.addEventListener('click', startLive);
-    stopLiveBtn.addEventListener('click', stopLive);
-    followBtn.addEventListener('click', ()=>{
-      my.follow = !my.follow;
-      followBtn.textContent = `🎯 Follow: ${my.follow ? 'ON' : 'OFF'}`;
-      if (my.follow && my.lastLL) map?.easeTo({ center: my.lastLL, duration: 500 });
-    });
-  });
-
-  // ---------- Auth handlers ----------
-  async function onLogin(){
-    loginErr.textContent=''; loginBtn.disabled=true;
-    try{
-      const email=loginEmail.value.trim(), pass=loginPass.value;
-      if(!email||!pass) throw new Error('Enter email and password.');
-      await auth.signInWithEmailAndPassword(email, pass);
-    }catch(e){ loginErr.textContent = e.message || String(e); toast(loginErr.textContent, true); }
-    finally{ loginBtn.disabled=false; }
-  }
-  async function onSignup(){
-    signupErr.textContent=''; signupBtn.disabled=true;
-    try{
-      const name=suName.value.trim(), email=suEmail.value.trim(), pass=suPass.value;
-      if(!name) throw new Error('Please enter a display name.');
-      if(!email||!pass) throw new Error('Enter email and password.');
-      const cred = await auth.createUserWithEmailAndPassword(email, pass);
-      await cred.user.updateProfile({ displayName: name });
-      await db.collection('users').doc(cred.user.uid).set({ name }, { merge:true });
-      signupCard.style.display='none'; loginCard.style.display='block';
-      toast('Account created. Please log in.');
-    }catch(e){ signupErr.textContent = e.message || String(e); toast(signupErr.textContent, true); }
-    finally{ signupBtn.disabled=false; }
-  }
-
-  // ---------- Map setup ----------
+  // --- Map ---
   let map, mapLoaded=false;
-  function setupMapOnce(){
+  function setupMap(){
     if (map) return;
-    if (!window.maplibregl){ toast('Map library failed to load. Check network/CSP.', true); return; }
     map = new maplibregl.Map({
-      container: "map",
-      style: {
-        "version": 8,
-        "glyphs": "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",  // required for text labels
-        "sources": {
-          "osm": { "type":"raster", "tiles":["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], "tileSize":256, "attribution":"© OpenStreetMap contributors" }
+      container:'map',
+      style:{
+        version:8,
+        glyphs:"https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+        sources:{
+          osm:{ type:'raster', tiles:["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], tileSize:256, attribution:"© OpenStreetMap contributors" }
         },
-        "layers": [{ "id":"osm", "type":"raster", "source":"osm" }]
+        layers:[{ id:'osm', type:'raster', source:'osm' }]
       },
-      center: [-79.3832, 43.6532],
-      zoom: 15
+      center:[-79.3832,43.6532], zoom:15
     });
     map.addControl(new maplibregl.NavigationControl(), "top-right");
-    map.on('load', () => { mapLoaded=true; ensurePeopleLayers(); renderPeople(); });
+    map.on('load', ()=>{ mapLoaded=true; ensureMeLayers(); ensureOthersLayers(); renderMe(); renderOthers(); });
   }
 
-  // Build/ensure the layers every time before drawing
-  function ensurePeopleLayers(){
-    if (!map) return;
-    // GeoJSON source
-    if (!map.getSource('people')){
-      map.addSource('people', { type:'geojson', data:{ type:'FeatureCollection', features:[] }});
+  // Separate sources/layers for ME and OTHERS
+  function ensureMeLayers(){
+    if (!map.getSource('me')){
+      map.addSource('me',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
     }
-    // Soft halo (classic circle under the dot) — fixed pixel radius
-    if (!map.getLayer('people-halo')){
-      map.addLayer({
-        id:'people-halo', type:'circle', source:'people',
-        filter:['==',['get','kind'],'point'],
-        paint:{
-          'circle-radius': 16,
-          'circle-color': '#2F80ED',
-          'circle-opacity': 0.18
-        }
-      });
+    if (!map.getLayer('me-halo')){
+      map.addLayer({ id:'me-halo', type:'circle', source:'me',
+        paint:{ 'circle-radius':16, 'circle-color':'#2F80ED', 'circle-opacity':0.18 }});
     }
-    // Blue dot
-    if (!map.getLayer('people-dots')){
-      map.addLayer({
-        id:'people-dots', type:'circle', source:'people',
-        filter:['==',['get','kind'],'point'],
-        paint:{
-          'circle-radius': 8,
-          'circle-color': '#2F80ED',
-          'circle-stroke-color': '#ffffff',
-          'circle-stroke-width': 2
-        }
-      });
+    if (!map.getLayer('me-dot')){
+      map.addLayer({ id:'me-dot', type:'circle', source:'me',
+        paint:{ 'circle-radius':8, 'circle-color':'#2F80ED', 'circle-stroke-color':'#fff', 'circle-stroke-width':2 }});
     }
-    // Name label (fonts exist on this glyph server)
-    if (!map.getLayer('people-labels')){
-      map.addLayer({
-        id:'people-labels', type:'symbol', source:'people',
-        filter:['==',['get','kind'],'point'],
+    if (!map.getLayer('me-label')){
+      map.addLayer({ id:'me-label', type:'symbol', source:'me',
         layout:{
           'text-field':['get','name'],
           'text-font':['Open Sans Regular','Arial Unicode MS Regular'],
-          'text-size': 12,
-          'text-offset':[0,1.4],
-          'text-anchor':'top',
-          'text-allow-overlap': true,
-          'text-ignore-placement': true
+          'text-size':12, 'text-offset':[0,1.4], 'text-anchor':'top',
+          'text-allow-overlap':true, 'text-ignore-placement':true
         },
-        paint:{
-          'text-color':'#e6e8ee',
-          'text-halo-color':'#0b0f16',
-          'text-halo-width':1.2
-        }
-      });
+        paint:{ 'text-color':'#e6e8ee','text-halo-color':'#0b0f16','text-halo-width':1.2 }});
+    }
+  }
+  function ensureOthersLayers(){
+    if (!map.getSource('others')){
+      map.addSource('others',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+    }
+    if (!map.getLayer('others-halo')){
+      map.addLayer({ id:'others-halo', type:'circle', source:'others',
+        paint:{ 'circle-radius':16, 'circle-color':'#2F80ED', 'circle-opacity':0.12 }});
+    }
+    if (!map.getLayer('others-dot')){
+      map.addLayer({ id:'others-dot', type:'circle', source:'others',
+        paint:{ 'circle-radius':8, 'circle-color':'#2F80ED', 'circle-stroke-color':'#fff', 'circle-stroke-width':2 }});
+    }
+    if (!map.getLayer('others-label')){
+      map.addLayer({ id:'others-label', type:'symbol', source:'others',
+        layout:{
+          'text-field':['get','name'],
+          'text-font':['Open Sans Regular','Arial Unicode MS Regular'],
+          'text-size':12, 'text-offset':[0,1.4], 'text-anchor':'top',
+          'text-allow-overlap':true, 'text-ignore-placement':true
+        },
+        paint:{ 'text-color':'#e6e8ee','text-halo-color':'#0b0f16','text-halo-width':1.2 }});
     }
   }
 
-  // ---------- People rendering ----------
-  const users = new Map(); // uid -> {lng,lat,name,ts}
-  function renderPeople(){
-    if (!mapLoaded) return;
-    ensurePeopleLayers();
-    const src = map.getSource('people'); if (!src) return;
-    const now=Date.now(), feats=[];
-    let liveCount=0;
-    users.forEach((u,uid)=>{
-      if (now-u.ts>30000) return;
-      liveCount++;
-      feats.push({ type:'Feature', properties:{uid,kind:'point',name:u.name||''}, geometry:{ type:'Point', coordinates:[u.lng,u.lat] }});
-    });
-    src.setData({ type:'FeatureCollection', features:feats });
-    statusEl.textContent = `${my.live ? 'Live' : 'Signed in'} • showing ${liveCount} user(s)`;
-  }
+  // --- My state ---
+  let me = { uid:null, name:'', live:false, watchId:null, last:[null,null] };
 
-  // ---------- Auth state / profile ----------
-  let my = { uid:null, name:'', live:false, watchId:null, follow:true, lastLL:null };
-  let presenceUnsub = null;
-
-  function deriveName(user, doc){
-    if (user?.displayName) return user.displayName;           // preferred
+  function deriveName(u, doc){
+    if (u?.displayName) return u.displayName;
     if (doc?.exists && doc.data()?.name) return doc.data().name;
-    if (user?.email) return user.email.split('@')[0];         // fallback
+    if (u?.email) return u.email.split('@')[0];
     return 'Me';
   }
 
-  auth.onAuthStateChanged(async (user)=>{
-    if (user){
-      const prof = await db.collection('users').doc(user.uid).get();
-      my.uid = user.uid;
-      my.name = deriveName(user, prof);
-      await db.collection('users').doc(user.uid).set({ name: my.name }, { merge:true });
+  function renderMe(){
+    if (!mapLoaded) return;
+    ensureMeLayers();
+    const src=map.getSource('me'); if(!src) return;
+    if (me.last[0]==null) { src.setData({type:'FeatureCollection',features:[]}); return; }
+    src.setData({
+      type:'FeatureCollection',
+      features:[{ type:'Feature', properties:{ name: me.name || 'Me' },
+        geometry:{ type:'Point', coordinates: me.last }}]
+    });
+  }
 
-      authScreens.style.display='none';
-      mapDiv.style.display='block';
+  // --- Others (presence) ---
+  const others = new Map(); // uid -> {lng,lat,name,ts}
+  let unsubPresence=null;
+
+  function renderOthers(){
+    if (!mapLoaded) return;
+    ensureOthersLayers();
+    const src=map.getSource('others'); if(!src) return;
+    const now=Date.now(), feats=[];
+    others.forEach((o,uid)=>{ if(now-o.ts>30000) return; feats.push({
+      type:'Feature', properties:{ name:o.name||'' }, geometry:{ type:'Point', coordinates:[o.lng,o.lat] }
+    }); });
+    src.setData({ type:'FeatureCollection', features:feats });
+    const count = feats.length + (me.last[0]==null?0:1);
+    $('status').textContent = `${me.live ? 'Live' : 'Signed in'} • showing ${count} user(s)`;
+  }
+
+  function startPresence(){
+    if (unsubPresence) return;
+    unsubPresence = db.collection('presence').onSnapshot(snap=>{
+      const now=Date.now();
+      snap.docChanges().forEach(ch=>{
+        const uid=ch.doc.id, d=ch.doc.data();
+        if (uid===me.uid) return; // skip myself in "others"
+        if (!d || typeof d.lat!=='number' || typeof d.lng!=='number') { others.delete(uid); return; }
+        const ts = d.updatedAt?.toMillis?.() ? d.updatedAt.toMillis() : now;
+        if (ch.type==='removed') others.delete(uid);
+        else others.set(uid,{ lng:d.lng, lat:d.lat, name:d.name||'', ts });
+      });
+      renderOthers();
+    });
+  }
+  function stopPresence(){ if (unsubPresence){ unsubPresence(); unsubPresence=null; } others.clear(); renderOthers(); }
+
+  // --- Auth UI ---
+  loginBtn.onclick = async ()=>{
+    authErr.textContent=''; loginBtn.disabled=true;
+    try{
+      if(!email.value.trim()||!pass.value) throw new Error('Enter email and password.');
+      await auth.signInWithEmailAndPassword(email.value.trim(), pass.value);
+    }catch(e){ authErr.textContent=e.message||String(e); showToast(authErr.textContent); }
+    finally{ loginBtn.disabled=false; }
+  };
+  signupBtn.onclick = async ()=>{
+    authErr.textContent=''; signupBtn.disabled=true;
+    try{
+      if(!email.value.trim()||!pass.value) throw new Error('Enter email and password.');
+      const c = await auth.createUserWithEmailAndPassword(email.value.trim(), pass.value);
+      // name can be set after login from the header
+      await db.collection('users').doc(c.user.uid).set({ name:'' }, {merge:true});
+      showToast('Account created. Log in now.');
+    }catch(e){ authErr.textContent=e.message||String(e); showToast(authErr.textContent); }
+    finally{ signupBtn.disabled=false; }
+  };
+
+  // After login
+  auth.onAuthStateChanged(async (u)=>{
+    if (u){
+      const doc = await db.collection('users').doc(u.uid).get();
+      me.uid = u.uid;
+      me.name = deriveName(u, doc);
+      displayName.value = me.name;
+      authScreen.style.display='none';
+      authControls.style.display='flex';
       legend.style.display='block';
-      authedCtrls.style.display='flex';
+      setupMap();
       statusEl.textContent='Signed in';
-
-      setupMapOnce();
     } else {
-      await stopLive();
-      users.clear(); renderPeople();
-      authedCtrls.style.display='none';
-      mapDiv.style.display='none';
+      await goOffline();
+      me={ uid:null, name:'', live:false, watchId:null, last:[null,null] };
+      authControls.style.display='none';
       legend.style.display='none';
-      authScreens.style.display='flex';
-      signupCard.style.display='none';
-      loginCard.style.display='block';
+      authScreen.style.display='flex';
     }
   });
 
-  // ---------- Presence (others) ----------
-  function startPresenceListener(){
-    if (presenceUnsub) return;
-    presenceUnsub = db.collection('presence').onSnapshot((snap)=>{
-      const now = Date.now();
-      snap.docChanges().forEach(ch=>{
-        const uid=ch.doc.id, d=ch.doc.data();
-        if (!d || typeof d.lat!=='number' || typeof d.lng!=='number') { users.delete(uid); return; }
-        const ts = d.updatedAt?.toMillis?.() ? d.updatedAt.toMillis() : now;
-        if (ch.type==='removed') users.delete(uid);
-        else users.set(uid, { lng:d.lng, lat:d.lat, name:d.name||'', ts });
-      });
-      renderPeople();
-    });
-  }
-  function stopPresenceListener(){ if (presenceUnsub){ presenceUnsub(); presenceUnsub=null; } }
-
-  // ---------- Live location ----------
-  const GEO_OPTS_FIRST = { enableHighAccuracy:true, timeout:20000, maximumAge:0 };
-  const GEO_OPTS_WATCH = { enableHighAccuracy:true, timeout:15000, maximumAge:0 };
-
-  async function startLive(){
+  saveName.onclick = async ()=>{
     if (!auth.currentUser) return;
-    if (!SECURE_OK) toast('Use HTTPS or http://localhost for precise GPS.', true);
-    if (my.watchId != null) return;
+    const name = (displayName.value||'').trim();
+    me.name = name || 'Me';
+    try{
+      await auth.currentUser.updateProfile({ displayName: me.name });
+    }catch(e){}
+    await db.collection('users').doc(me.uid).set({ name: me.name }, {merge:true});
+    renderMe();
+    if (me.live) await db.collection('presence').doc(me.uid).set({ name: me.name, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, {merge:true});
+    showToast('Name saved');
+  };
 
-    startPresenceListener(); // only while I'm live
+  // --- Live on/off ---
+  goLive.onclick = async ()=>{ await goOnline(); };
+  stopLive.onclick = async ()=>{ await goOffline(); };
+  logout.onclick = async ()=>{ await goOffline(); await auth.signOut(); };
 
-    // Precision first fix
-    navigator.geolocation.getCurrentPosition((pos)=>onPos(pos,true), ()=>{}, GEO_OPTS_FIRST);
-    // Continuous updates
-    my.watchId = navigator.geolocation.watchPosition(onPos, onErr, GEO_OPTS_WATCH);
+  async function goOnline(){
+    if (!auth.currentUser) return;
+    if (!SECURE) showToast('Use HTTPS or localhost for precise GPS');
+    if (me.live) return;
 
-    goLiveBtn.disabled=true; stopLiveBtn.disabled=false;
-    statusEl.textContent='Live (sharing)…';
-    my.live=true;
+    startPresence(); // start seeing others only while live
+
+    // precision first fix
+    navigator.geolocation.getCurrentPosition((pos)=>{
+      const {latitude,longitude}=pos.coords;
+      me.last=[longitude,latitude];
+      renderMe(); if(map) map.jumpTo({center:me.last, zoom:16});
+      // write initial presence
+      db.collection('presence').doc(me.uid).set({
+        lng: longitude, lat: latitude, name: me.name || 'Me',
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, {merge:true});
+    }, ()=>{}, {enableHighAccuracy:true, timeout:20000, maximumAge:0});
+
+    // continuous updates
+    me.watchId = navigator.geolocation.watchPosition(onPos, onErr, {enableHighAccuracy:true, timeout:15000, maximumAge:0});
+
+    goLive.disabled=true; stopLive.disabled=false; me.live=true; statusEl.textContent='Live (sharing)…';
   }
 
-  async function stopLive(){
-    if (my.watchId != null){ navigator.geolocation.clearWatch(my.watchId); my.watchId=null; }
-    if (my.uid){ try{ await db.collection('presence').doc(my.uid).delete(); }catch(e){} }
-    stopPresenceListener();
-    users.delete(my.uid); renderPeople();
-    goLiveBtn.disabled=false; stopLiveBtn.disabled=true;
-    statusEl.textContent = auth.currentUser ? 'Signed in' : 'Signed out';
-    my.live=false;
+  async function goOffline(){
+    if (me.watchId!=null){ navigator.geolocation.clearWatch(me.watchId); me.watchId=null; }
+    stopPresence();
+    if (me.uid) { try{ await db.collection('presence').doc(me.uid).delete(); }catch(e){} }
+    me.live=false; goLive.disabled=false; stopLive.disabled=true; statusEl.textContent = auth.currentUser ? 'Signed in' : 'Signed out';
+    // keep my last point locally? up to you—here we clear it:
+    me.last=[null,null]; renderMe(); renderOthers();
   }
 
-  window.addEventListener('beforeunload', ()=>{ if (my.live && my.uid) db.collection('presence').doc(my.uid).delete(); });
+  window.addEventListener('beforeunload', ()=>{ if(me.live && me.uid) db.collection('presence').doc(me.uid).delete(); });
 
   let writeTimer=null;
-  function onPos(pos, first=false){
+  function onPos(pos){
     const { latitude, longitude } = pos.coords;
-    my.lastLL=[longitude, latitude];
-
-    const display = (my.name && my.name.trim()) ? my.name : (auth.currentUser?.email ? auth.currentUser.email.split('@')[0] : 'Me');
-
-    // Update local immediately (so dot + name show even before Firestore round-trip)
-    users.set(my.uid, { lng:longitude, lat:latitude, name:display, ts:Date.now() });
-    renderPeople();
-
-    if (my.follow || first) map?.easeTo({ center:[longitude, latitude], duration: first?0:400 });
-
-    // Share to Firestore (so others see me)
+    me.last=[longitude, latitude];
+    renderMe();
+    // share to others (throttled)
     clearTimeout(writeTimer);
     writeTimer = setTimeout(()=> {
-      db.collection('presence').doc(my.uid).set({
-        lat: latitude, lng: longitude, name: display,
+      db.collection('presence').doc(me.uid).set({
+        lng: longitude, lat: latitude, name: me.name || 'Me',
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge:true });
-    }, 300);
+      }, {merge:true});
+    }, 250);
   }
-
-  function onErr(err){
-    statusEl.textContent = err.message || 'Location error';
-    if (err.code === 1) toast('Allow location permissions.', true);
-  }
+  function onErr(err){ statusEl.textContent = err.message || 'Location error'; showToast(statusEl.textContent); }
 </script>
 </body>
 </html>
