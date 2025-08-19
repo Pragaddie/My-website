@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-  <title>Live Location — Blue Dots with Names</title>
+  <title>Live Location — Classic Blue Dot + Name</title>
 
   <!-- MapLibre -->
   <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet"/>
@@ -110,26 +110,19 @@
   function toast(msg, warn=false){ const t=document.createElement('div'); t.className='toast'+(warn?' warn':''); t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(), 2600); }
   if (!SECURE_OK) toast('Use HTTPS or http://localhost — precise GPS needs a secure context.', true);
 
-  // ---------- Firebase config (REPLACE placeholders) ----------
+  // ---------- Firebase (your project: maps-46c58) ----------
   const firebaseConfig = {
-  apiKey: "AIzaSyClWN488bGSNubdX5V63u4j_HRT8jUdif4",
-  authDomain: "maps-46c58.firebaseapp.com",
-  projectId: "maps-46c58",
-  storageBucket: "maps-46c58.firebasestorage.app",
-  messagingSenderId: "334648884277",
-  appId: "1:334648884277:web:acbcc1a3c82b12e7e9c57c",
-  measurementId: "G-WVW7W93TB2"
+    apiKey: "AIzaSyClWN488bGSNubdX5V63u4j_HRT8jUdif4",
+    authDomain: "maps-46c58.firebaseapp.com",
+    projectId: "maps-46c58",
+    storageBucket: "maps-46c58.firebasestorage.app",
+    messagingSenderId: "334648884277",
+    appId: "1:334648884277:web:acbcc1a3c82b12e7e9c57c",
+    measurementId: "G-WVW7W93TB2"
   };
   firebase.initializeApp(firebaseConfig);
   const auth = firebase.auth();
   const db   = firebase.firestore();
-
-  // quick config check
-  const cfg = firebase?.app()?.options || {};
-  if (!cfg.apiKey || String(cfg.apiKey).includes('PASTE_YOUR_KEY')) {
-    toast('Firebase config missing/placeholder. Paste your real config.', true);
-    console.error('Firebase config problem:', cfg);
-  }
 
   // ---------- DOM refs ----------
   const $ = (id)=>document.getElementById(id);
@@ -190,7 +183,7 @@
       container: "map",
       style: {
         "version": 8,
-        "glyphs": "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",  // required for labels
+        "glyphs": "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",  // required for text labels
         "sources": {
           "osm": { "type":"raster", "tiles":["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], "tileSize":256, "attribution":"© OpenStreetMap contributors" }
         },
@@ -203,52 +196,63 @@
     map.on('load', () => { mapLoaded=true; ensurePeopleLayers(); renderPeople(); });
   }
 
+  // Build/ensure the layers every time before drawing
   function ensurePeopleLayers(){
     if (!map) return;
+    // GeoJSON source
     if (!map.getSource('people')){
       map.addSource('people', { type:'geojson', data:{ type:'FeatureCollection', features:[] }});
     }
-    if (!map.getLayer('people-accuracy')){
+    // Soft halo (classic circle under the dot) — fixed pixel radius
+    if (!map.getLayer('people-halo')){
       map.addLayer({
-        id:'people-accuracy', type:'fill', source:'people',
-        filter:['==',['get','kind'],'acc'],
-        paint:{ 'fill-color':'#2F80ED', 'fill-opacity':0.15 }
+        id:'people-halo', type:'circle', source:'people',
+        filter:['==',['get','kind'],'point'],
+        paint:{
+          'circle-radius': 16,
+          'circle-color': '#2F80ED',
+          'circle-opacity': 0.18
+        }
       });
     }
+    // Blue dot
     if (!map.getLayer('people-dots')){
       map.addLayer({
         id:'people-dots', type:'circle', source:'people',
         filter:['==',['get','kind'],'point'],
-        paint:{ 'circle-radius':8, 'circle-color':'#2F80ED', 'circle-stroke-color':'#fff', 'circle-stroke-width':2 }
+        paint:{
+          'circle-radius': 8,
+          'circle-color': '#2F80ED',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2
+        }
       });
     }
+    // Name label (fonts exist on this glyph server)
     if (!map.getLayer('people-labels')){
       map.addLayer({
         id:'people-labels', type:'symbol', source:'people',
         filter:['==',['get','kind'],'point'],
         layout:{
           'text-field':['get','name'],
-          'text-font':['Open Sans Semibold','Arial Unicode MS Regular'],
-          'text-size':12,
+          'text-font':['Open Sans Regular','Arial Unicode MS Regular'],
+          'text-size': 12,
           'text-offset':[0,1.4],
           'text-anchor':'top',
-          'text-allow-overlap':true,
-          'text-ignore-placement':true
+          'text-allow-overlap': true,
+          'text-ignore-placement': true
         },
-        paint:{ 'text-color':'#e6e8ee', 'text-halo-color':'#0b0f16', 'text-halo-width':1.2 }
+        paint:{
+          'text-color':'#e6e8ee',
+          'text-halo-color':'#0b0f16',
+          'text-halo-width':1.2
+        }
       });
     }
   }
 
   // ---------- People rendering ----------
-  const users = new Map(); // uid -> {lng,lat,name,acc,ts}
-  function circlePolygon([lng,lat], radiusMeters){
-    const steps=64, pts=[]; const R=6378137;
-    const dLng=m=>(m/(R*Math.cos(lat*Math.PI/180)))*(180/Math.PI);
-    const dLat=m=>(m/R)*(180/Math.PI);
-    for(let i=0;i<=steps;i++){ const a=(i/steps)*Math.PI*2; pts.push([ lng+dLng(Math.sin(a)*radiusMeters), lat+dLat(Math.cos(a)*radiusMeters) ]); }
-    return pts;
-  }
+  const users = new Map(); // uid -> {lng,lat,name,ts}
   function renderPeople(){
     if (!mapLoaded) return;
     ensurePeopleLayers();
@@ -258,8 +262,6 @@
     users.forEach((u,uid)=>{
       if (now-u.ts>30000) return;
       liveCount++;
-      const acc=Math.max(0,Number(u.acc||0));
-      if (acc>0) feats.push({ type:'Feature', properties:{uid,kind:'acc'}, geometry:{ type:'Polygon', coordinates:[circlePolygon([u.lng,u.lat], acc)] }});
       feats.push({ type:'Feature', properties:{uid,kind:'point',name:u.name||''}, geometry:{ type:'Point', coordinates:[u.lng,u.lat] }});
     });
     src.setData({ type:'FeatureCollection', features:feats });
@@ -271,9 +273,9 @@
   let presenceUnsub = null;
 
   function deriveName(user, doc){
-    if (user?.displayName) return user.displayName;
+    if (user?.displayName) return user.displayName;           // preferred
     if (doc?.exists && doc.data()?.name) return doc.data().name;
-    if (user?.email) return user.email.split('@')[0];
+    if (user?.email) return user.email.split('@')[0];         // fallback
     return 'Me';
   }
 
@@ -313,7 +315,7 @@
         if (!d || typeof d.lat!=='number' || typeof d.lng!=='number') { users.delete(uid); return; }
         const ts = d.updatedAt?.toMillis?.() ? d.updatedAt.toMillis() : now;
         if (ch.type==='removed') users.delete(uid);
-        else users.set(uid, { lng:d.lng, lat:d.lat, acc:d.acc||0, name:d.name||'', ts });
+        else users.set(uid, { lng:d.lng, lat:d.lat, name:d.name||'', ts });
       });
       renderPeople();
     });
@@ -331,9 +333,9 @@
 
     startPresenceListener(); // only while I'm live
 
-    // precision first fix
+    // Precision first fix
     navigator.geolocation.getCurrentPosition((pos)=>onPos(pos,true), ()=>{}, GEO_OPTS_FIRST);
-    // continuous updates
+    // Continuous updates
     my.watchId = navigator.geolocation.watchPosition(onPos, onErr, GEO_OPTS_WATCH);
 
     goLiveBtn.disabled=true; stopLiveBtn.disabled=false;
@@ -355,23 +357,22 @@
 
   let writeTimer=null;
   function onPos(pos, first=false){
-    const { latitude, longitude, accuracy } = pos.coords;
+    const { latitude, longitude } = pos.coords;
     my.lastLL=[longitude, latitude];
 
     const display = (my.name && my.name.trim()) ? my.name : (auth.currentUser?.email ? auth.currentUser.email.split('@')[0] : 'Me');
 
-    // update local immediately (so dot + name render even before Firestore roundtrip)
-    users.set(my.uid, { lng:longitude, lat:latitude, acc:accuracy||0, name:display, ts:Date.now() });
+    // Update local immediately (so dot + name show even before Firestore round-trip)
+    users.set(my.uid, { lng:longitude, lat:latitude, name:display, ts:Date.now() });
     renderPeople();
 
     if (my.follow || first) map?.easeTo({ center:[longitude, latitude], duration: first?0:400 });
 
-    // throttle Firestore writes (so others see me)
+    // Share to Firestore (so others see me)
     clearTimeout(writeTimer);
     writeTimer = setTimeout(()=> {
       db.collection('presence').doc(my.uid).set({
-        lat: latitude, lng: longitude, acc: accuracy||0,
-        name: display,
+        lat: latitude, lng: longitude, name: display,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge:true });
     }, 300);
