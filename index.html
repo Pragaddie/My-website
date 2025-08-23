@@ -364,14 +364,17 @@
         const marker = upsertMarker(uid, name, data.lat, data.lng, uid === myUid);
         seen.add(uid);
 
-        // Click handler: poke on other users
+        // Click handler: IMMEDIATE status banner + send poke (no composite index needed)
         if (uid !== myUid && !marker._pokeBound) {
           marker._pokeBound = true;
           marker.on('click', async () => {
-            const other = await getUser(uid);
-            await sendPoke(uid, other.name || name);
-            // Also show the clicked user's status on my screen
-            showStatusBanner(other.name || name, other.status || '');
+            // Show the clicked user's status to ME immediately
+            try {
+              const other = await getUser(uid);
+              showStatusBanner(other.name || name || 'User', other.status || '');
+            } catch { showStatusBanner(name || 'User', ''); }
+            // Send the poke so THEY get vibrate/ding + toast + banner
+            await sendPoke(uid, name);
           });
         }
       }
@@ -399,10 +402,10 @@
   let pokesUnsub = null;
   function startPokeListener(myUid_) {
     if (pokesUnsub) pokesUnsub();
+    // Avoid composite index by using a single where() and filtering handled client-side
     const qy = query(
       collection(db, 'pokes'),
       where('toUid', '==', myUid_),
-      where('handled', '==', false),
       orderBy('createdAt', 'desc'),
       limit(10)
     );
@@ -410,6 +413,7 @@
       snap.docChanges().forEach(async (ch) => {
         if (ch.type !== 'added') return;
         const id = ch.doc.id; const p = ch.doc.data();
+        if (p.handled === true) return; // client-side filter
         vibrate([120,60,120]);
         playDing();
         toast(`${p.fromName} poked you`);
