@@ -147,6 +147,13 @@
 
 <!-- Firebase (v10 modular) -->
 <script type="module">
+  // Catch top-level errors and surface them to the user
+  window.addEventListener('error', (e) => {
+    console.error('Runtime error:', e.error || e.message);
+    const t = document.getElementById('toast');
+    if (t) { t.textContent = 'Error: ' + (e.error?.message || e.message); t.style.opacity = '1'; }
+  });
+
   // ======== Firebase init ========
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -192,6 +199,7 @@
   // ======== Toasts ========
   let toastTimer = null;
   function toast(msg, ms = 2600) {
+    if (!toastEl) return alert(msg);
     toastEl.textContent = msg;
     toastEl.style.opacity = '1';
     toastEl.style.transform = 'translateX(-50%) translateY(0)';
@@ -219,91 +227,49 @@
     if ('vibrate' in navigator) navigator.vibrate(pattern);
   }
 
-  // ======== Status banner (kept for fallback, but we'll use map popups now)
+  // ======== Helpers ========
+  function secureOriginOK() { return location.protocol === 'https:' || location.hostname === 'localhost'; }
+  function deriveNameFromEmail(email) { return (email || '').split('@')[0] || 'User'; }
+  const throttle = (fn, wait) => { let last = 0; let timer = null; let lastArgs; return function(...args){ const now = Date.now(); lastArgs = args; if (now - last >= wait) { last = now; fn.apply(this, args); } else if (!timer) { timer = setTimeout(() => { last = Date.now(); timer = null; fn.apply(this, lastArgs); }, wait - (now - last)); } } }
+
+  // ======== Leaflet map (create ASAP) ========
+  const map = L.map('map', { zoomControl: true, minZoom: 2, maxZoom: 20 });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+  map.setView([43.6532, -79.3832], 11); // GTA default
+
+  // Marker management (create BEFORE any function that uses markers)
+  const markers = new Map(); // uid -> L.Marker
+  function makeLabelHTML(name, me=false){ return `<span class="dot-label ${me? 'me':''}"><span class="dot-circle"></span>${name}</span>`; }
+  function upsertMarker(uid, name, lat, lng, isMe=false) {
+    const key = uid; const icon = L.divIcon({ className: '', html: makeLabelHTML(name, isMe) });
+    if (markers.has(key)) { const m = markers.get(key); m.setLatLng([lat, lng]); m.setIcon(icon); }
+    else { const m = L.marker([lat, lng], { icon }).addTo(map); markers.set(key, m); }
+    return markers.get(key);
+  }
+  function removeMarker(uid){ const m = markers.get(uid); if (!m) return; map.removeLayer(m); markers.delete(uid); }
+
+  // ======== Status banner (fallback) ========
   let bannerTimer = null;
   function showStatusBanner(name, statusText, ms = 4500) {
     const text = statusText ? `🗒️ ${name}'s status: “${statusText}”` : `🗒️ ${name} has no status`;
-    statusBanner.textContent = text;
-    statusBanner.style.opacity = '1';
-    statusBanner.style.transform = 'translateX(-50%) translateY(0)';
-    clearTimeout(bannerTimer);
-    bannerTimer = setTimeout(hideStatusBanner, ms);
+    statusBanner.textContent = text; statusBanner.style.opacity = '1'; statusBanner.style.transform = 'translateX(-50%) translateY(0)';
+    clearTimeout(bannerTimer); bannerTimer = setTimeout(hideStatusBanner, ms);
   }
-  function hideStatusBanner() {
-    statusBanner.style.opacity = '0';
-    statusBanner.style.transform = 'translateX(-50%) translateY(-20px)';
-  }
+  function hideStatusBanner() { statusBanner.style.opacity = '0'; statusBanner.style.transform = 'translateX(-50%) translateY(-20px)'; }
 
-  // ======== Map-anchored status popup ========
+  // ======== Map-anchored status popup (defined AFTER map/markers) ========
   let statusPopupTimer = null;
   function showStatusAtLatLng(latlng, name, statusText, ms = 4500) {
-    if (!latlng) { // fallback to banner if we lack a coordinate
-      showStatusBanner(name, statusText, ms);
-      return;
-    }
-    const html = `<div><div><strong>${name}</strong></div><div class="muted">${statusText ? statusText.replace(/</g,'&lt;') : 'No status'}</div></div>`;
-    const popup = L.popup({
-      autoPan: true,
-      closeButton: false,
-      autoClose: true,
-      className: 'status-pop',
-      offset: [0, -16]
-    }).setLatLng(latlng).setContent(html);
+    if (!latlng) { showStatusBanner(name, statusText, ms); return; }
+    const safeStatus = (statusText || '').replace(/</g,'&lt;');
+    const html = `<div><div><strong>${name}</strong></div><div class="muted">${safeStatus || 'No status'}</div></div>`;
+    const popup = L.popup({ autoPan: true, closeButton: false, autoClose: true, className: 'status-pop', offset: [0, -16] })
+      .setLatLng(latlng).setContent(html);
     map.openPopup(popup);
-    clearTimeout(statusPopupTimer);
-    statusPopupTimer = setTimeout(() => { map.closePopup(popup); }, ms);
+    clearTimeout(statusPopupTimer); statusPopupTimer = setTimeout(() => { map.closePopup(popup); }, ms);
   }
   function showStatusAtMarker(uid, fallbackLatLng, name, statusText, ms = 4500) {
-    const m = markers.get(uid);
-    const ll = m?.getLatLng?.() || fallbackLatLng || null;
-    showStatusAtLatLng(ll, name, statusText, ms);
-  }
-
-  // ======== Helpers ========
-  function secureOriginOK() {
-    return location.protocol === 'https:' || location.hostname === 'localhost';
-  }
-  function deriveNameFromEmail(email) {
-    return (email || '').split('@')[0] || 'User';
-  }
-  const throttle = (fn, wait) => {
-    let last = 0; let timer = null; let lastArgs;
-    return function(...args){
-      const now = Date.now(); lastArgs = args;
-      if (now - last >= wait) { last = now; fn.apply(this, args); }
-      else if (!timer) {
-        timer = setTimeout(() => { last = Date.now(); timer = null; fn.apply(this, lastArgs); }, wait - (now - last));
-      }
-    }
-  }
-
-  // ======== Leaflet map ========
-  const map = L.map('map', { zoomControl: true, minZoom: 2, maxZoom: 20 });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap contributors'
-  }).addTo(map);
-  map.setView([43.6532, -79.3832], 11); // GTA default
-
-  // Marker management
-  const markers = new Map(); // uid -> L.Marker
-  function makeLabelHTML(name, me=false){
-    return `<span class="dot-label ${me? 'me':''}"><span class="dot-circle"></span>${name}</span>`;
-  }
-  function upsertMarker(uid, name, lat, lng, isMe=false) {
-    const key = uid;
-    const icon = L.divIcon({ className: '', html: makeLabelHTML(name, isMe) });
-    if (markers.has(key)) {
-      const m = markers.get(key);
-      m.setLatLng([lat, lng]);
-      m.setIcon(icon);
-    } else {
-      const m = L.marker([lat, lng], { icon }).addTo(map);
-      markers.set(key, m);
-    }
-    return markers.get(key);
-  }
-  function removeMarker(uid){
-    const m = markers.get(uid); if (!m) return; map.removeLayer(m); markers.delete(uid);
+    const m = markers.get(uid); const ll = m?.getLatLng?.() || fallbackLatLng || null; showStatusAtLatLng(ll, name, statusText, ms);
   }
 
   // ======== Firestore: my user/profile ========
@@ -314,222 +280,106 @@
     statusInput.value = data.status || '';
     return data;
   }
-  async function saveName(uid, name) {
-    await setDoc(doc(db, 'users', uid), { name }, { merge: true });
-  }
-  async function saveStatus(uid, status) {
-    await setDoc(doc(db, 'users', uid), { status }, { merge: true });
-  }
-  async function getUser(uid) {
-    const s = await getDoc(doc(db, 'users', uid));
-    return s.exists()? s.data() : {};
-  }
+  async function saveName(uid, name) { await setDoc(doc(db, 'users', uid), { name }, { merge: true }); }
+  async function saveStatus(uid, status) { await setDoc(doc(db, 'users', uid), { status }, { merge: true }); }
+  async function getUser(uid) { const s = await getDoc(doc(db, 'users', uid)); return s.exists()? s.data() : {}; }
 
   // ======== Presence ========
-  let watchId = null;
-  let myUid = null;
-  const presenceDocRef = () => doc(db, 'presence', myUid);
-
+  let watchId = null; let myUid = null; const presenceDocRef = () => doc(db, 'presence', myUid);
   const writePresence = throttle(async (pos) => {
     if (!myUid) return;
     const { latitude: lat, longitude: lng } = pos.coords;
-    // read current display name value (fallback to email-derived later)
     const name = (displayNameEl.value || whoami.dataset.emailPrefix || 'Me').trim();
-    await setDoc(presenceDocRef(), {
-      lat, lng, name,
-      updatedAt: serverTimestamp()
-    }, { merge: true });
-    // Update my marker immediately
+    await setDoc(presenceDocRef(), { lat, lng, name, updatedAt: serverTimestamp() }, { merge: true });
     upsertMarker(myUid, name || 'Me', lat, lng, true);
   }, 250);
-
   function startWatch() {
-    if (!secureOriginOK()) {
-      toast('Use HTTPS or http://localhost for precise GPS');
-    }
-    if (watchId != null) return; // already live
-    if (!auth.currentUser) { toast('Please sign in first.'); return; }
-    navigator.geolocation.getCurrentPosition((pos) => {
-      map.setView([pos.coords.latitude, pos.coords.longitude], 16);
-    }, (err) => console.warn(err), { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 });
-
-    watchId = navigator.geolocation.watchPosition(writePresence, (err) => {
-      console.warn('watchPosition error', err);
-      toast('Location error: ' + err.message);
-    }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 });
-
-    goLiveBtn.style.display = 'none';
-    stopBtn.style.display = 'inline-block';
+    if (!secureOriginOK()) { toast('Use HTTPS or http://localhost for precise GPS'); }
+    if (watchId != null) return; if (!auth.currentUser) { toast('Please sign in first.'); return; }
+    navigator.geolocation.getCurrentPosition((pos) => { map.setView([pos.coords.latitude, pos.coords.longitude], 16); }, (err) => console.warn(err), { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 });
+    watchId = navigator.geolocation.watchPosition(writePresence, (err) => { console.warn('watchPosition error', err); toast('Location error: ' + err.message); }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 });
+    goLiveBtn.style.display = 'none'; stopBtn.style.display = 'inline-block';
   }
-
-  async function stopWatch() {
-    if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-    if (myUid) { try { await deleteDoc(presenceDocRef()); } catch (e) {/* ignore */} }
-    stopBtn.style.display = 'none';
-    goLiveBtn.style.display = 'inline-block';
-  }
-
-  // Cleanup on close/visibility
+  async function stopWatch() { if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; } if (myUid) { try { await deleteDoc(presenceDocRef()); } catch (e) {} } stopBtn.style.display = 'none'; goLiveBtn.style.display = 'inline-block'; }
   window.addEventListener('beforeunload', () => { if (watchId != null) navigator.geolocation.clearWatch(watchId); });
-  document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState === 'hidden') {
-      try { if (myUid) await deleteDoc(presenceDocRef()); } catch(e){}
-    }
-  });
+  document.addEventListener('visibilitychange', async () => { if (document.visibilityState === 'hidden') { try { if (myUid) await deleteDoc(presenceDocRef()); } catch(e){} } });
 
   // Listen to presence and render others
   let presenceUnsub = null;
   function subscribePresence() {
     if (presenceUnsub) presenceUnsub();
     presenceUnsub = onSnapshot(collection(db, 'presence'), async (snap) => {
-      const now = Date.now();
-      const seen = new Set();
+      const now = Date.now(); const seen = new Set();
       for (const d of snap.docs) {
         const uid = d.id; const data = d.data();
-        const ts = data.updatedAt?.toMillis?.() ?? 0;
-        if (now - ts > 30_000) continue; // stale >30s ignore
+        const ts = data.updatedAt?.toMillis?.() ?? 0; if (now - ts > 30_000) continue;
         if (!Number.isFinite(data.lat) || !Number.isFinite(data.lng)) continue;
         const name = (uid === myUid) ? (displayNameEl.value || 'Me') : (data.name || 'User');
         const marker = upsertMarker(uid, name, data.lat, data.lng, uid === myUid);
         seen.add(uid);
-
-        // Click handler: IMMEDIATE status popup above their dot + send poke
         if (uid !== myUid && !marker._pokeBound) {
           marker._pokeBound = true;
           marker.on('click', async () => {
-            // Show the clicked user's status to ME immediately (popup anchored to THEIR dot)
-            try {
-              const other = await getUser(uid);
-              showStatusAtMarker(uid, marker.getLatLng(), other.name || name || 'User', other.status || '');
-            } catch { showStatusAtMarker(uid, marker.getLatLng(), name || 'User', ''); }
-            // Send the poke so THEY get vibrate/ding + toast + status popup on their side
+            try { const other = await getUser(uid); showStatusAtMarker(uid, marker.getLatLng(), other.name || name || 'User', other.status || ''); }
+            catch { showStatusAtMarker(uid, marker.getLatLng(), name || 'User', ''); }
             await sendPoke(uid, name);
           });
         }
-        }
       }
-      // remove markers for users no longer present
-      for (const [uid] of markers) {
-        if (!seen.has(uid)) removeMarker(uid);
-      }
-    });
+      for (const [uid] of markers) { if (!seen.has(uid)) removeMarker(uid); }
+    }, (err) => { console.error('presence onSnapshot error', err); toast('Presence error: ' + err.message); });
   }
 
   // ======== Pokes ========
   async function sendPoke(targetUid, targetName) {
     const me = auth.currentUser; if (!me) return toast('Sign in to poke.');
-    const myUser = await getUser(me.uid);
-    const myStatus = myUser.status || '';
-    // capture my current map position if available so recipient can anchor popup
+    const myUser = await getUser(me.uid); const myStatus = myUser.status || '';
     const myLatLng = markers.get(me.uid)?.getLatLng?.();
-    await addDoc(collection(db, 'pokes'), {
-      toUid: targetUid,
-      fromUid: me.uid,
-      fromName: myUser.name || deriveNameFromEmail(me.email),
-      fromStatus: myStatus,
-      fromLat: myLatLng?.lat ?? null,
-      fromLng: myLatLng?.lng ?? null,
-      createdAt: serverTimestamp(),
-      handled: false
-    });
-  });
+    await addDoc(collection(db, 'pokes'), { toUid: targetUid, fromUid: me.uid, fromName: myUser.name || deriveNameFromEmail(me.email), fromStatus: myStatus, fromLat: myLatLng?.lat ?? null, fromLng: myLatLng?.lng ?? null, createdAt: serverTimestamp(), handled: false });
   }
   let pokesUnsub = null;
   function startPokeListener(myUid_) {
     if (pokesUnsub) pokesUnsub();
-    // Avoid composite index by using a single where() and filtering handled client-side
-    const qy = query(
-      collection(db, 'pokes'),
-      where('toUid', '==', myUid_),
-      orderBy('createdAt', 'desc'),
-      limit(10)
-    );
+    const qy = query(collection(db, 'pokes'), where('toUid', '==', myUid_), orderBy('createdAt', 'desc'), limit(10));
     pokesUnsub = onSnapshot(qy, (snap) => {
       snap.docChanges().forEach(async (ch) => {
-        if (ch.type !== 'added') return;
-        const id = ch.doc.id; const p = ch.doc.data();
-        if (p.handled === true) return; // client-side filter
-        vibrate([120,60,120]);
-        playDing();
-        toast(`${p.fromName} poked you`);
+        if (ch.type !== 'added') return; const id = ch.doc.id; const p = ch.doc.data(); if (p.handled === true) return;
+        vibrate([120,60,120]); playDing(); toast(`${p.fromName} poked you`);
         try { await updateDoc(doc(db, 'pokes', id), { handled: true }); } catch (e) {}
-        setTimeout(() => {
-          const ll = (markers.get(p.fromUid)?.getLatLng?.()) || ( (p.fromLat!=null && p.fromLng!=null) ? L.latLng(p.fromLat, p.fromLng) : null );
-          showStatusAtLatLng(ll, p.fromName || 'Someone', p.fromStatus || '');
-        }, 350);
+        setTimeout(() => { const ll = (markers.get(p.fromUid)?.getLatLng?.()) || ((p.fromLat!=null && p.fromLng!=null) ? L.latLng(p.fromLat, p.fromLng) : null); showStatusAtLatLng(ll, p.fromName || 'Someone', p.fromStatus || ''); }, 350);
       });
-    });
+    }, (err) => { console.error('pokes onSnapshot error', err); toast('Pokes error: ' + err.message); });
   }
 
   // ======== Auth UI ========
   signupBtn.addEventListener('click', async () => {
-    try {
-      const cred = await createUserWithEmailAndPassword(auth, emailEl.value.trim(), passwordEl.value.trim());
-      toast('Account created. You can set your display name.');
-    } catch (e) { toast(e.message); }
+    try { await createUserWithEmailAndPassword(auth, emailEl.value.trim(), passwordEl.value.trim()); toast('Account created. You can set your display name.'); }
+    catch (e) { toast(e.message); }
   });
   loginBtn.addEventListener('click', async () => {
-    try {
-      await signInWithEmailAndPassword(auth, emailEl.value.trim(), passwordEl.value.trim());
-    } catch (e) { toast(e.message); }
+    try { await signInWithEmailAndPassword(auth, emailEl.value.trim(), passwordEl.value.trim()); }
+    catch (e) { toast(e.message); }
   });
-  logoutBtn.addEventListener('click', async () => {
-    await stopWatch();
-    await signOut(auth);
-  });
-
-  saveNameBtn.addEventListener('click', async () => {
-    const u = auth.currentUser; if (!u) return toast('Sign in first.');
-    const name = (displayNameEl.value || '').trim();
-    await saveName(u.uid, name);
-    toast('Name saved');
-  });
-  saveStatusBtn.addEventListener('click', async () => {
-    const u = auth.currentUser; if (!u) return toast('Sign in first.');
-    const status = (statusInput.value || '').trim();
-    await saveStatus(u.uid, status);
-    toast('Status saved');
-  });
-
+  logoutBtn.addEventListener('click', async () => { await stopWatch(); await signOut(auth); });
+  saveNameBtn.addEventListener('click', async () => { const u = auth.currentUser; if (!u) return toast('Sign in first.'); const name = (displayNameEl.value || '').trim(); await saveName(u.uid, name); toast('Name saved'); });
+  saveStatusBtn.addEventListener('click', async () => { const u = auth.currentUser; if (!u) return toast('Sign in first.'); const status = (statusInput.value || '').trim(); await saveStatus(u.uid, status); toast('Status saved'); });
   goLiveBtn.addEventListener('click', startWatch);
   stopBtn.addEventListener('click', stopWatch);
-
-  if (!secureOriginOK()) {
-    hintHttps.textContent = 'Tip: Use HTTPS or http://localhost for precise GPS';
-  }
+  if (!secureOriginOK()) { hintHttps.textContent = 'Tip: Use HTTPS or http://localhost for precise GPS'; }
 
   // ======== Auth state ========
   onAuthStateChanged(auth, async (user) => {
-    if (user) {
-      myUid = user.uid;
-      const emailPrefix = deriveNameFromEmail(user.email || '');
-      whoami.dataset.emailPrefix = emailPrefix;
-
-      whoami.textContent = `Logged in as ${user.email}`;
-      whoami.style.display = 'inline';
-      logoutBtn.style.display = 'inline-block';
-      profileRow.style.display = 'flex';
-
-      // Load my profile
-      const me = await loadMyProfile(user.uid);
-      if (!displayNameEl.value) displayNameEl.value = me.name || emailPrefix;
-
-      subscribePresence();
-      startPokeListener(user.uid);
-
-    } else {
-      myUid = null;
-      whoami.textContent = '';
-      whoami.style.display = 'none';
-      logoutBtn.style.display = 'none';
-      profileRow.style.display = 'none';
-      stopWatch();
-      // clear all markers
-      for (const [uid, m] of markers) { map.removeLayer(m); }
-      markers.clear();
-      if (presenceUnsub) { presenceUnsub(); presenceUnsub = null; }
-      if (pokesUnsub) { pokesUnsub(); pokesUnsub = null; }
-    }
+    try {
+      if (user) {
+        myUid = user.uid; const emailPrefix = deriveNameFromEmail(user.email || ''); whoami.dataset.emailPrefix = emailPrefix;
+        whoami.textContent = `Logged in as ${user.email}`; whoami.style.display = 'inline'; logoutBtn.style.display = 'inline-block'; profileRow.style.display = 'flex';
+        const me = await loadMyProfile(user.uid); if (!displayNameEl.value) displayNameEl.value = me.name || emailPrefix;
+        subscribePresence(); startPokeListener(user.uid);
+      } else {
+        myUid = null; whoami.textContent = ''; whoami.style.display = 'none'; logoutBtn.style.display = 'none'; profileRow.style.display = 'none';
+        stopWatch(); for (const [uid, m] of markers) { map.removeLayer(m); } markers.clear(); if (presenceUnsub) { presenceUnsub(); presenceUnsub = null; } if (pokesUnsub) { pokesUnsub(); pokesUnsub = null; }
+      }
+    } catch (e) { console.error('Auth state handler error', e); toast('Auth error: ' + e.message); }
   });
 </script>
 </body>
