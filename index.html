@@ -99,7 +99,11 @@
     @media (max-width: 960px) {
       input[type="email"], input[type="password"], input[type="text"] { min-width: 140px; }
       header { grid-template-columns: 1fr; }
-    }
+    }    /* Leaflet popup styling for status */
+    .status-pop .leaflet-popup-content-wrapper { background: rgba(25,25,28,0.95); color:#fff; border-radius:12px; border:1px solid rgba(255,255,255,0.08); box-shadow:0 10px 28px rgba(0,0,0,0.35); }
+    .status-pop .leaflet-popup-tip { background: rgba(25,25,28,0.95); }
+    .status-pop .leaflet-popup-content { margin:10px 12px; font-weight:500; font-size:13px; }
+    .status-pop .muted { color:#cbd5e1; opacity:.8; }
   </style>
 </head>
 <body>
@@ -215,7 +219,7 @@
     if ('vibrate' in navigator) navigator.vibrate(pattern);
   }
 
-  // ======== Status banner ========
+  // ======== Status banner (kept for fallback, but we'll use map popups now)
   let bannerTimer = null;
   function showStatusBanner(name, statusText, ms = 4500) {
     const text = statusText ? `🗒️ ${name}'s status: “${statusText}”` : `🗒️ ${name} has no status`;
@@ -228,6 +232,31 @@
   function hideStatusBanner() {
     statusBanner.style.opacity = '0';
     statusBanner.style.transform = 'translateX(-50%) translateY(-20px)';
+  }
+
+  // ======== Map-anchored status popup ========
+  let statusPopupTimer = null;
+  function showStatusAtLatLng(latlng, name, statusText, ms = 4500) {
+    if (!latlng) { // fallback to banner if we lack a coordinate
+      showStatusBanner(name, statusText, ms);
+      return;
+    }
+    const html = `<div><div><strong>${name}</strong></div><div class="muted">${statusText ? statusText.replace(/</g,'&lt;') : 'No status'}</div></div>`;
+    const popup = L.popup({
+      autoPan: true,
+      closeButton: false,
+      autoClose: true,
+      className: 'status-pop',
+      offset: [0, -16]
+    }).setLatLng(latlng).setContent(html);
+    map.openPopup(popup);
+    clearTimeout(statusPopupTimer);
+    statusPopupTimer = setTimeout(() => { map.closePopup(popup); }, ms);
+  }
+  function showStatusAtMarker(uid, fallbackLatLng, name, statusText, ms = 4500) {
+    const m = markers.get(uid);
+    const ll = m?.getLatLng?.() || fallbackLatLng || null;
+    showStatusAtLatLng(ll, name, statusText, ms);
   }
 
   // ======== Helpers ========
@@ -364,18 +393,19 @@
         const marker = upsertMarker(uid, name, data.lat, data.lng, uid === myUid);
         seen.add(uid);
 
-        // Click handler: IMMEDIATE status banner + send poke (no composite index needed)
+        // Click handler: IMMEDIATE status popup above their dot + send poke
         if (uid !== myUid && !marker._pokeBound) {
           marker._pokeBound = true;
           marker.on('click', async () => {
-            // Show the clicked user's status to ME immediately
+            // Show the clicked user's status to ME immediately (popup anchored to THEIR dot)
             try {
               const other = await getUser(uid);
-              showStatusBanner(other.name || name || 'User', other.status || '');
-            } catch { showStatusBanner(name || 'User', ''); }
-            // Send the poke so THEY get vibrate/ding + toast + banner
+              showStatusAtMarker(uid, marker.getLatLng(), other.name || name || 'User', other.status || '');
+            } catch { showStatusAtMarker(uid, marker.getLatLng(), name || 'User', ''); }
+            // Send the poke so THEY get vibrate/ding + toast + status popup on their side
             await sendPoke(uid, name);
           });
+        }
         }
       }
       // remove markers for users no longer present
@@ -390,14 +420,19 @@
     const me = auth.currentUser; if (!me) return toast('Sign in to poke.');
     const myUser = await getUser(me.uid);
     const myStatus = myUser.status || '';
+    // capture my current map position if available so recipient can anchor popup
+    const myLatLng = markers.get(me.uid)?.getLatLng?.();
     await addDoc(collection(db, 'pokes'), {
       toUid: targetUid,
       fromUid: me.uid,
       fromName: myUser.name || deriveNameFromEmail(me.email),
       fromStatus: myStatus,
+      fromLat: myLatLng?.lat ?? null,
+      fromLng: myLatLng?.lng ?? null,
       createdAt: serverTimestamp(),
       handled: false
     });
+  });
   }
   let pokesUnsub = null;
   function startPokeListener(myUid_) {
@@ -418,7 +453,10 @@
         playDing();
         toast(`${p.fromName} poked you`);
         try { await updateDoc(doc(db, 'pokes', id), { handled: true }); } catch (e) {}
-        setTimeout(() => { showStatusBanner(p.fromName || 'Someone', p.fromStatus || ''); }, 350);
+        setTimeout(() => {
+          const ll = (markers.get(p.fromUid)?.getLatLng?.()) || ( (p.fromLat!=null && p.fromLng!=null) ? L.latLng(p.fromLat, p.fromLng) : null );
+          showStatusAtLatLng(ll, p.fromName || 'Someone', p.fromStatus || '');
+        }, 350);
       });
     });
   }
